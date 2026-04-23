@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from agent_core.agent.orchestrator import AgentOrchestrator
 from agent_core.config import Settings
+from agent_core.logger import configure_logger
 from agent_core.models import AgentMode, HealthStatus, SessionRecord
 
 
@@ -23,6 +24,11 @@ def build_orchestrator() -> AgentOrchestrator:
     return AgentOrchestrator(settings=settings)
 
 
+def build_server_logger():
+    settings = Settings.load()
+    return configure_logger(settings.logs_dir / "editor-agent.log")
+
+
 def build_health_status() -> HealthStatus:
     settings = Settings.load()
     return HealthStatus(
@@ -35,7 +41,14 @@ def build_health_status() -> HealthStatus:
     )
 
 
-def run_agent(mode: AgentMode, workspace: str, user_input: str | None) -> SessionRecord:
+def run_agent(
+    mode: AgentMode,
+    workspace: str,
+    user_input: str | None,
+    temperature_override: float | None = None,
+    max_tokens_override: int | None = None,
+) -> SessionRecord:
+    logger = build_server_logger()
     orchestrator = build_orchestrator()
     workspace_path = resolve_workspace_or_400(workspace)
     try:
@@ -43,8 +56,12 @@ def run_agent(mode: AgentMode, workspace: str, user_input: str | None) -> Sessio
             mode=mode,
             workspace_path=workspace_path,
             user_input=user_input,
+            temperature_override=temperature_override,
+            max_tokens_override=max_tokens_override,
         )
     except ValueError as exc:
+        logger.exception("Validation error while running agent mode=%s workspace=%s", mode.value, workspace)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
+        logger.exception("Unhandled server error while running agent mode=%s workspace=%s", mode.value, workspace)
         raise HTTPException(status_code=500, detail=str(exc)) from exc

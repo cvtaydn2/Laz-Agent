@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 
 from agent_core.models import ParsedAnswer, ProposedFileOperation
@@ -18,23 +19,37 @@ class ResponseParser:
     }
 
     def parse(self, text: str) -> ParsedAnswer:
+        json_result = self._parse_json(text)
+        if json_result is not None:
+            return json_result
+
+        return self._parse_text(text)
+
+    def _parse_text(self, text: str) -> ParsedAnswer:
         sections: dict[str, list[str]] = {value: [] for value in self.HEADINGS.values()}
         current_key = "summary"
 
-        for raw_line in text.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
+        try:
+            for raw_line in text.splitlines():
+                line = raw_line.strip()
+                if not line:
+                    continue
 
-            matched_heading = next((key for key in self.HEADINGS if line.upper() == key), None)
-            if matched_heading:
-                current_key = self.HEADINGS[matched_heading]
-                continue
+                matched_heading = next((key for key in self.HEADINGS if line.upper() == key), None)
+                if matched_heading:
+                    current_key = self.HEADINGS[matched_heading]
+                    continue
 
-            normalized = line.removeprefix("- ").removeprefix("* ").strip()
-            sections[current_key].append(normalized)
+                normalized = line.removeprefix("- ").removeprefix("* ").strip()
+                sections[current_key].append(normalized)
+        except Exception:
+            return ParsedAnswer(
+                summary=text.strip() or "No model content returned.",
+                raw_text=text,
+                parse_strategy="raw_text",
+            )
 
-        summary = " ".join(sections["summary"]).strip() or text.strip()
+        summary = " ".join(sections["summary"]).strip() or text.strip() or "No model content returned."
         return ParsedAnswer(
             summary=summary,
             findings=sections["findings"],
@@ -45,6 +60,35 @@ class ResponseParser:
             proposed_changes=sections["proposed_changes"],
             next_steps=sections["next_steps"],
             file_operations=self._parse_file_operations(text),
+            raw_text=text,
+            parse_strategy="text",
+        )
+
+    def _parse_json(self, text: str) -> ParsedAnswer | None:
+        json_candidate = self._extract_json_candidate(text)
+        if json_candidate is None:
+            return None
+
+        try:
+            payload = json.loads(json_candidate)
+        except json.JSONDecodeError:
+            return None
+
+        if not isinstance(payload, dict):
+            return None
+
+        return ParsedAnswer(
+            summary=self._string_or_default(payload.get("summary"), text),
+            findings=self._to_string_list(payload.get("findings")),
+            suggestions=self._to_string_list(payload.get("suggestions")),
+            commands_to_consider=self._to_string_list(payload.get("commands_to_consider")),
+            risks=self._to_string_list(payload.get("risks")),
+            affected_files=self._to_string_list(payload.get("affected_files")),
+            proposed_changes=self._to_string_list(payload.get("proposed_changes")),
+            next_steps=self._to_string_list(payload.get("next_steps")),
+            file_operations=self._parse_json_file_operations(payload.get("file_operations")),
+            raw_text=text,
+            parse_strategy="json",
         )
 
     def _parse_file_operations(self, text: str) -> list[ProposedFileOperation]:
@@ -65,3 +109,52 @@ class ResponseParser:
                 )
             )
         return operations
+
+    def _extract_json_candidate(self, text: str) -> str | None:
+        stripped = text.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            return stripped
+
+        fenced_match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+        if fenced_match:
+            return fenced_match.group(1)
+
+        inline_match = re.search(r"(\{[\s\S]*\"summary\"[\s\S]*\})", text)
+        if inline_match:
+            return inline_match.group(1)
+
+        return None
+
+    def _to_string_list(self, value: object) -> list[str]:
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str) and value.strip():
+            return [value.strip()]
+        return []
+
+    def _parse_json_file_operations(self, value: object) -> list[ProposedFileOperation]:
+        if not isinstance(value, list):
+            return []
+
+        operations: list[ProposedFileOperation] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            path = str(item.get("path", "")).strip()
+            action = str(item.get("action", "")).strip().lower()
+            content = str(item.get("content", ""))
+            if not path or not action:
+                continue
+            operations.append(
+                ProposedFileOperation(
+                    path=path,
+                    action=action,
+                    content=content,
+                )
+            )
+        return operations
+
+    def _string_or_default(self, value: object, fallback: str) -> str:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        return fallback.strip() or "No model content returned."

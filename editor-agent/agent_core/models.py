@@ -61,6 +61,8 @@ class ParsedAnswer(BaseModel):
     proposed_changes: list[str] = Field(default_factory=list)
     next_steps: list[str] = Field(default_factory=list)
     file_operations: list["ProposedFileOperation"] = Field(default_factory=list)
+    raw_text: str = ""
+    parse_strategy: str = "text"
 
 
 class ProposedFileOperation(BaseModel):

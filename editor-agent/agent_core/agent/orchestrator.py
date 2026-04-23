@@ -13,6 +13,7 @@ from agent_core.models import (
     ApplyLogRecord,
     AgentMode,
     ChatMessage,
+    ParsedAnswer,
     PatchProposal,
     SessionRecord,
     build_session_id,
@@ -52,6 +53,8 @@ class AgentOrchestrator:
         workspace_path: Path,
         user_input: str | None,
         confirm: bool = False,
+        temperature_override: float | None = None,
+        max_tokens_override: int | None = None,
     ) -> SessionRecord:
         self.logger.info("Starting run: mode=%s workspace=%s", mode.value, workspace_path)
 
@@ -65,8 +68,20 @@ class AgentOrchestrator:
             ChatMessage(role="system", content=prompt_bundle.system_prompt),
             ChatMessage(role="user", content=prompt_bundle.user_prompt),
         ]
-        model_response = self.client.chat(messages)
-        parsed = self.response_parser.parse(model_response.content)
+        model_response = self.client.chat(
+            messages,
+            temperature_override=temperature_override,
+            max_tokens_override=max_tokens_override,
+        )
+        try:
+            parsed = self.response_parser.parse(model_response.content)
+        except Exception:
+            self.logger.exception("Response parsing failed; falling back to raw model text.")
+            parsed = ParsedAnswer(
+                summary=model_response.content.strip() or "No model content returned.",
+                raw_text=model_response.content,
+                parse_strategy="raw_text",
+            )
         session_id = build_session_id(mode)
         created_at = utc_now()
 

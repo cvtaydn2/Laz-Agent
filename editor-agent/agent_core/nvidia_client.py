@@ -19,15 +19,26 @@ class NvidiaClient:
         wait=wait_exponential(multiplier=1, min=1, max=8),
         retry=retry_if_exception_type(httpx.HTTPError),
     )
-    def chat(self, messages: Iterable[ChatMessage]) -> ModelResponse:
+    def chat(
+        self,
+        messages: Iterable[ChatMessage],
+        temperature_override: float | None = None,
+        max_tokens_override: int | None = None,
+    ) -> ModelResponse:
         if not self.settings.nvidia_api_key:
             raise ValueError("NVIDIA_API_KEY is not configured.")
 
         payload = {
             "model": self.settings.nvidia_model,
-            "temperature": self.settings.temperature,
+            "temperature": (
+                temperature_override
+                if temperature_override is not None
+                else self.settings.temperature
+            ),
             "messages": [message.model_dump() for message in messages],
         }
+        if max_tokens_override is not None:
+            payload["max_tokens"] = max_tokens_override
 
         headers = {
             "Authorization": f"Bearer {self.settings.nvidia_api_key}",

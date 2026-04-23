@@ -23,6 +23,7 @@ This project currently includes Phase 1, Phase 2, and Phase 3 safe capabilities:
 - `patch-preview` generates file-by-file proposed changes without modifying files
 - `apply` can write explicitly proposed file changes only when `--confirm` is provided
 - FastAPI server exposes editor-friendly JSON endpoints on localhost
+- OpenAI-compatible compatibility endpoints are available alongside the custom endpoints
 - safe file scanning with ignore rules and extension allowlist
 - UTF-8-safe file reads with binary detection
 - relevant file ranking based on the task and project signals
@@ -72,8 +73,12 @@ editor-agent/
     server/
       __init__.py
       api.py
+      openai_adapter.py
+      openai_schemas.py
       schemas.py
       service.py
+  tests/
+    test_openai_compat.py
   state/
     sessions/
     logs/
@@ -165,6 +170,8 @@ uvicorn agent_core.server.api:app --host 127.0.0.1 --port 8000
 - `POST /ask`
 - `POST /suggest`
 - `POST /patch-preview`
+- `GET /v1/models`
+- `POST /v1/chat/completions`
 
 Example request:
 
@@ -175,6 +182,110 @@ $body = @{
 } | ConvertTo-Json
 
 Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/ask -ContentType "application/json" -Body $body
+```
+
+## OpenAI-Compatible Endpoints
+
+The server exposes a minimal non-streaming OpenAI-compatible layer for editor and chat clients.
+
+Supported endpoints:
+
+- `GET /v1/models`
+- `POST /v1/chat/completions`
+
+Supported request fields for `POST /v1/chat/completions`:
+
+- `model`
+- `messages`
+- `temperature`
+- `max_tokens`
+- `stream`
+- `extra_body.workspace`
+- `extra_body.mode`
+
+Workspace metadata format:
+
+- Preferred: `extra_body.workspace`
+- Preferred mode field: `extra_body.mode`
+- Fallbacks also accepted: `metadata.workspace`, `metadata.mode`, or top-level `workspace` and `mode`
+
+Compatibility rules:
+
+- `workspace` is required
+- `mode` defaults to `ask`
+- allowed modes: `ask`, `analyze`, `suggest`, `patch-preview`
+- `apply` is not available through `/v1/chat/completions`
+- `stream=true` is rejected for now
+
+### OpenAI-Compatible Model List
+
+`curl`:
+
+```bash
+curl http://127.0.0.1:8000/v1/models
+```
+
+PowerShell:
+
+```powershell
+Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/v1/models
+```
+
+### OpenAI-Compatible Chat Completions
+
+`curl`:
+
+```bash
+curl http://127.0.0.1:8000/v1/chat/completions ^
+  -H "Content-Type: application/json" ^
+  -d "{\"model\":\"laz-agent\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a code assistant.\"},{\"role\":\"user\",\"content\":\"What does this project do?\"}],\"temperature\":0.2,\"max_tokens\":1200,\"extra_body\":{\"workspace\":\"C:/Users/Cevat/Documents/Github/Laz-Agent/editor-agent\",\"mode\":\"ask\"}}"
+```
+
+PowerShell:
+
+```powershell
+$body = @{
+  model = "laz-agent"
+  messages = @(
+    @{
+      role = "system"
+      content = "You are a code assistant."
+    },
+    @{
+      role = "user"
+      content = "What does this project do?"
+    }
+  )
+  temperature = 0.2
+  max_tokens = 1200
+  extra_body = @{
+    workspace = "C:/Users/Cevat/Documents/Github/Laz-Agent/editor-agent"
+    mode = "ask"
+  }
+} | ConvertTo-Json -Depth 6
+
+Invoke-RestMethod -Method Post `
+  -Uri http://127.0.0.1:8000/v1/chat/completions `
+  -ContentType "application/json" `
+  -Body $body
+```
+
+Example request body:
+
+```json
+{
+  "model": "laz-agent",
+  "messages": [
+    {"role": "system", "content": "You are a code assistant."},
+    {"role": "user", "content": "What does this project do?"}
+  ],
+  "temperature": 0.2,
+  "max_tokens": 1200,
+  "extra_body": {
+    "workspace": "C:/Users/Cevat/Documents/Github/Laz-Agent/editor-agent",
+    "mode": "ask"
+  }
+}
 ```
 
 ## Configuration
@@ -204,6 +315,8 @@ The app reads environment variables from `.env` when available.
 - Apply mode creates backups before each file write and rolls back on failure.
 - In this safe version, confirmed apply only updates existing files. New-file creation stays in preview mode until a later phase.
 - The local HTTP server reuses the same orchestration layer as the CLI and returns structured JSON only.
+- The OpenAI-compatible layer is non-streaming only and defaults to `ask` mode.
+- The compatibility adapter returns plain text assistant content for stability.
 - Large files, binary files, ignored directories, and disallowed extensions are skipped.
 
 ## Session Output
@@ -248,3 +361,11 @@ Apply log files include:
 
 - Health checks do not make a paid-provider call. They only validate local configuration and endpoint setup inputs.
 - If you want to test a live model response, use `analyze`, `ask`, `suggest`, `patch-preview`, `apply`, or the HTTP endpoints after setting `NVIDIA_API_KEY`.
+
+## Validation
+
+A small compatibility test is included:
+
+```powershell
+python -m unittest tests.test_openai_compat
+```

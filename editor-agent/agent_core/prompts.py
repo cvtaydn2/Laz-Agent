@@ -14,6 +14,8 @@ SYSTEM_PROMPT = dedent(
     - If project information is incomplete, say so clearly.
     - Prefer concrete observations from the provided files.
     - Keep suggestions non-destructive and approval-based.
+    - Prefer returning a JSON object that matches the requested output keys.
+    - If you do not return JSON, use the exact headings requested by the task.
     - Use the exact headings requested by the task.
     - Use plain text.
     """
