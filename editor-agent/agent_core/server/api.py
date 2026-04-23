@@ -129,6 +129,12 @@ def chat_completions(request: OpenAIChatCompletionRequest):
                 detail="At least one non-empty user message is required.",
             )
 
+        print("DEBUG model:", request.model)
+        print("DEBUG extra_body:", request.extra_body)
+        print("DEBUG workspace:", workspace)
+        print("DEBUG mode raw:", mode_value)
+        print("DEBUG user_message:", user_message)
+
         session = run_agent(
             AgentMode(mode_value),
             workspace,
@@ -138,6 +144,8 @@ def chat_completions(request: OpenAIChatCompletionRequest):
             changed_files=extract_changed_files(request),
             diff_text=extract_diff(request),
         )
+        print("DEBUG agent final_message:", getattr(session, "final_message", None))
+        print("DEBUG agent summary:", getattr(session.parsed_response, "summary", None))
         return build_openai_response(session=session, requested_model=request.model)
     except HTTPException:
         raise

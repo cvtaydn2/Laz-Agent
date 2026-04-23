@@ -5,6 +5,7 @@ import unittest
 from agent_core.agent.orchestrator import AgentOrchestrator
 from agent_core.agent.response_parser import ResponseParser
 from agent_core.config import Settings
+from agent_core.nvidia_client import NvidiaClient
 from agent_core.server.openai_adapter import (
     extract_changed_files,
     extract_request_mode,
@@ -129,6 +130,30 @@ class OpenAICompatibilityTests(unittest.TestCase):
                 diff_text=None,
             )
         )
+
+    def test_orchestrator_accepts_string_mode(self) -> None:
+        settings = Settings.model_validate(
+            {
+                "NVIDIA_API_KEY": "test-key",
+                "NVIDIA_MODEL": "moonshotai/kimi-k2-instruct",
+            }
+        )
+        orchestrator = AgentOrchestrator(settings)
+        self.assertEqual(orchestrator._normalize_mode("ask"), AgentMode.ASK)
+        self.assertEqual(orchestrator._normalize_mode("patch-preview"), AgentMode.PATCH_PREVIEW)
+
+    def test_temperature_override_accepts_numeric_string(self) -> None:
+        settings = Settings.model_validate(
+            {
+                "NVIDIA_API_KEY": "test-key",
+                "NVIDIA_MODEL": "moonshotai/kimi-k2-instruct",
+                "AGENT_TEMPERATURE": 0.1,
+            }
+        )
+        client = NvidiaClient(settings)
+        self.assertEqual(client._resolve_temperature("0.15"), 0.15)
+        self.assertEqual(client._resolve_temperature("2.0"), 0.2)
+        self.assertEqual(client._resolve_temperature("-1"), 0.0)
 
 
 if __name__ == "__main__":

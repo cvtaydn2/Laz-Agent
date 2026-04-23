@@ -51,7 +51,7 @@ class AgentOrchestrator:
 
     def run(
         self,
-        mode: AgentMode,
+        mode: AgentMode | str,
         workspace_path: Path,
         user_input: str | None,
         confirm: bool = False,
@@ -60,6 +60,7 @@ class AgentOrchestrator:
         changed_files: list[str] | None = None,
         diff_text: str | None = None,
     ) -> SessionRecord:
+        mode = self._normalize_mode(mode)
         self.logger.info("Starting run: mode=%s workspace=%s", mode.value, workspace_path)
         use_workspace = self._should_use_workspace(
             mode=mode,
@@ -67,6 +68,11 @@ class AgentOrchestrator:
             changed_files=changed_files,
             diff_text=diff_text,
         )
+        print("DEBUG normalized mode:", mode)
+        print("DEBUG should_use_workspace:", use_workspace)
+        print("DEBUG user_input:", user_input)
+        print("DEBUG changed_files:", changed_files)
+        print("DEBUG diff_text_present:", bool(diff_text))
         if use_workspace:
             scan_results, workspace_summary = self.scanner.scan(workspace_path)
             ranked_files = self.ranker.rank(
@@ -107,6 +113,10 @@ class AgentOrchestrator:
             ChatMessage(role="system", content=prompt_bundle.system_prompt),
             ChatMessage(role="user", content=prompt_bundle.user_prompt),
         ]
+        print("DEBUG system_prompt_len:", len(prompt_bundle.system_prompt))
+        print("DEBUG user_prompt_len:", len(prompt_bundle.user_prompt))
+        print("DEBUG max_completion_tokens:", self.settings.max_completion_tokens)
+        print("DEBUG timeout_seconds:", self.settings.timeout_seconds)
         try:
             model_response = self.client.chat(
                 messages,
@@ -196,6 +206,14 @@ class AgentOrchestrator:
             context_char_count,
         )
         return session
+
+    def _normalize_mode(self, mode: AgentMode | str) -> AgentMode:
+        if isinstance(mode, AgentMode):
+            return mode
+        if isinstance(mode, str):
+            normalized = mode.strip().lower().replace("-", "_")
+            return AgentMode(normalized)
+        raise ValueError("Mode must be an AgentMode or a valid mode string.")
 
     def _should_use_workspace(
         self,

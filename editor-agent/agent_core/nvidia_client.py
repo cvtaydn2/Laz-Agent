@@ -43,7 +43,7 @@ class NvidiaClient:
     def chat(
         self,
         messages: Iterable[ChatMessage],
-        temperature_override: float | None = None,
+        temperature_override: float | str | None = None,
         max_tokens_override: int | None = None,
     ) -> ModelResponse:
         if not self.settings.nvidia_api_key:
@@ -177,10 +177,15 @@ class NvidiaClient:
         usage = data.get("usage", {})
         return ModelResponse(content=content, usage=usage, status="ok")
 
-    def _resolve_temperature(self, temperature_override: float | None) -> float:
-        if temperature_override is None:
-            return self.settings.temperature
-        return min(max(temperature_override, 0.0), 0.2)
+    def _resolve_temperature(self, temperature_override: float | str | None) -> float:
+        value = temperature_override
+        if value is None:
+            value = self.settings.temperature
+        try:
+            numeric_value = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Temperature override must be numeric.") from exc
+        return min(max(numeric_value, 0.0), 0.2)
 
     def _resolve_max_tokens(self, max_tokens_override: int | None) -> int:
         if max_tokens_override is None:
