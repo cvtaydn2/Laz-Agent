@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from agent_core.config import ensure_environment_ready
 from agent_core.models import AgentMode
 from agent_core.server.openai_adapter import (
     build_openai_error,
@@ -28,7 +31,14 @@ from agent_core.server.schemas import (
 )
 from agent_core.server.service import build_health_status, run_agent
 
-app = FastAPI(title="Editor Agent API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    ensure_environment_ready()
+    yield
+
+
+app = FastAPI(title="Editor Agent API", version="0.1.0", lifespan=lifespan)
 
 
 @app.exception_handler(RequestValidationError)

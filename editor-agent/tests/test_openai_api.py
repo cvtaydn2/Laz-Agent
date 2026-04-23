@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import unittest
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -12,7 +13,12 @@ from agent_core.server.api import app
 
 class OpenAIAPITests(unittest.TestCase):
     def setUp(self) -> None:
+        self.env_patcher = patch.dict(os.environ, {"NVIDIA_API_KEY": "test-key"}, clear=False)
+        self.env_patcher.start()
         self.client = TestClient(app)
+
+    def tearDown(self) -> None:
+        self.env_patcher.stop()
 
     def test_missing_workspace_returns_400(self) -> None:
         response = self.client.post(

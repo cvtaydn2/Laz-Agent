@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import uvicorn
 
-from agent_core.config import Settings
+from agent_core.config import Settings, ensure_environment_ready
 
 
 def main() -> None:
+    ensure_environment_ready()
     settings = Settings.load()
     uvicorn.run(
         "agent_core.server.api:app",

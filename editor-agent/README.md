@@ -105,6 +105,28 @@ Copy-Item .env.example .env
 
 Then edit `.env` and set `NVIDIA_API_KEY`.
 
+## Environment Setup
+
+1. Create `.env` in the project root.
+2. Add:
+
+```env
+NVIDIA_API_KEY=nvapi-...
+```
+
+3. Start the server only from the project root:
+
+```powershell
+Set-Location C:\Users\Cevat\Documents\Github\Laz-Agent\editor-agent
+python .\server.py
+```
+
+Environment loading is explicit and deterministic:
+
+- the server loads `.env` using `find_dotenv(usecwd=True)`
+- the loaded path is printed at startup
+- startup fails fast if `NVIDIA_API_KEY` is missing
+
 ## Commands
 
 ### Health
@@ -421,4 +443,5 @@ A small compatibility test is included:
 ```powershell
 python -m unittest tests.test_openai_compat
 python -m unittest tests.test_openai_api
+python -m unittest tests.test_env_loading
 ```

@@ -4,11 +4,13 @@ import os
 from pathlib import Path
 from typing import ClassVar
 
-from dotenv import load_dotenv
-from pydantic import BaseModel, Field, HttpUrl
+from dotenv import find_dotenv, load_dotenv
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl
 
 
 class Settings(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     DEFAULT_IGNORE_DIRS: ClassVar[tuple[str, ...]] = (
         ".git",
         "node_modules",
@@ -57,20 +59,22 @@ class Settings(BaseModel):
 
     @classmethod
     def load(cls) -> "Settings":
-        load_dotenv(override=False)
-        settings = cls(
-            nvidia_api_key=os.getenv("NVIDIA_API_KEY", ""),
-            nvidia_base_url=os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
-            nvidia_model=os.getenv("NVIDIA_MODEL", "minimaxai/minimax-m2.7"),
-            temperature=float(os.getenv("AGENT_TEMPERATURE", "0.2")),
-            timeout_seconds=float(os.getenv("AGENT_TIMEOUT_SECONDS", "60")),
-            max_file_bytes=int(os.getenv("AGENT_MAX_FILE_BYTES", "200000")),
-            max_chars_per_file=int(os.getenv("AGENT_MAX_CHARS_PER_FILE", "4000")),
-            max_context_chars=int(os.getenv("AGENT_MAX_CONTEXT_CHARS", "24000")),
-            top_k_files=int(os.getenv("AGENT_TOP_K_FILES", "8")),
-            max_completion_tokens=int(os.getenv("AGENT_MAX_COMPLETION_TOKENS", "1200")),
-            server_host=os.getenv("AGENT_SERVER_HOST", "127.0.0.1"),
-            server_port=int(os.getenv("AGENT_SERVER_PORT", "8000")),
+        load_environment_from_cwd()
+        settings = cls.model_validate(
+            {
+                "NVIDIA_API_KEY": os.getenv("NVIDIA_API_KEY", ""),
+                "NVIDIA_BASE_URL": os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
+                "NVIDIA_MODEL": os.getenv("NVIDIA_MODEL", "minimaxai/minimax-m2.7"),
+                "AGENT_TEMPERATURE": float(os.getenv("AGENT_TEMPERATURE", "0.2")),
+                "AGENT_TIMEOUT_SECONDS": float(os.getenv("AGENT_TIMEOUT_SECONDS", "60")),
+                "AGENT_MAX_FILE_BYTES": int(os.getenv("AGENT_MAX_FILE_BYTES", "200000")),
+                "AGENT_MAX_CHARS_PER_FILE": int(os.getenv("AGENT_MAX_CHARS_PER_FILE", "4000")),
+                "AGENT_MAX_CONTEXT_CHARS": int(os.getenv("AGENT_MAX_CONTEXT_CHARS", "24000")),
+                "AGENT_TOP_K_FILES": int(os.getenv("AGENT_TOP_K_FILES", "8")),
+                "AGENT_MAX_COMPLETION_TOKENS": int(os.getenv("AGENT_MAX_COMPLETION_TOKENS", "1200")),
+                "AGENT_SERVER_HOST": os.getenv("AGENT_SERVER_HOST", "127.0.0.1"),
+                "AGENT_SERVER_PORT": int(os.getenv("AGENT_SERVER_PORT", "8000")),
+            }
         )
         settings.ensure_state_dirs()
         return settings
@@ -116,3 +120,18 @@ class Settings(BaseModel):
             self.backups_dir,
         ):
             directory.mkdir(parents=True, exist_ok=True)
+
+
+def load_environment_from_cwd() -> str:
+    dotenv_path = find_dotenv(usecwd=True)
+    load_dotenv(dotenv_path=dotenv_path, override=True)
+    print(f"Loaded .env from: {dotenv_path}")
+    print(f"NVIDIA_API_KEY present: {bool(os.getenv('NVIDIA_API_KEY'))}")
+    return dotenv_path
+
+
+def ensure_environment_ready() -> str:
+    dotenv_path = load_environment_from_cwd()
+    if not os.getenv("NVIDIA_API_KEY"):
+        raise RuntimeError("NVIDIA_API_KEY is missing. Check your .env file or environment variables.")
+    return dotenv_path
