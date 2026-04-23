@@ -12,6 +12,7 @@ from agent_core.agent.patch_preview import PatchPreviewPolicy
 from agent_core.agent.planner import AgentPlanner
 from agent_core.agent.response_parser import ResponseParser
 from agent_core.agent.suggester import SuggestionPolicy
+from agent_core.knowledge import KnowledgeBase
 from agent_core.config import Settings
 from agent_core.llm import get_llm_provider
 from agent_core.logger import configure_logger
@@ -55,7 +56,9 @@ class AgentOrchestrator:
         self.patch_writer = PatchProposalWriter(settings)
         self.apply_log_writer = ApplyLogWriter(settings)
         self.apply_engine = ApplyEngine(settings)
+        self.knowledge_base = KnowledgeBase.load(settings.state_dir / "knowledge_base.json")
         self.logger = configure_logger(settings.logs_dir / "editor-agent.log")
+        self.logger.info("Orchestrator initialized with knowledge base.")
 
     async def run(
         self,
@@ -134,6 +137,20 @@ class AgentOrchestrator:
             use_workspace,
         )
 
+        # Pre-flight diagnostic check
+        diagnostic_notes = ""
+        if mode in {AgentMode.FIX, AgentMode.BUG_HUNT, AgentMode.ANALYZE}:
+            diag = await self._run_diagnostic(workspace_path)
+            if diag:
+                diagnostic_notes = f"\n### CURRENT WORKSPACE DIAGNOSTIC:\n{diag}\n"
+                self.logger.info("Diagnostic check found issues; attaching to prompt.")
+
+        # Query knowledge base for past lessons
+        past_lessons = []
+        if user_input:
+            lessons = self.knowledge_base.query(user_input)
+            past_lessons = [f"{l.pattern}: {l.solution_summary}" for l in lessons[:3]]
+
         prompt_bundle = build_prompt(
             mode,
             workspace_summary,
@@ -141,7 +158,10 @@ class AgentOrchestrator:
             user_input,
             changed_files=changed_files,
             diff_text=diff_text,
+            past_lessons=past_lessons,
         )
+        if diagnostic_notes:
+            prompt_bundle.user_prompt += diagnostic_notes
         messages = [
             ChatMessage(role="system", content=prompt_bundle.system_prompt),
             ChatMessage(role="user", content=prompt_bundle.user_prompt),
@@ -242,6 +262,14 @@ class AgentOrchestrator:
                     )
             
             apply_log_path = str(await self.apply_log_writer.write(apply_log))
+            
+            # Record in knowledge base for self-learning
+            if apply_log.success:
+                self.knowledge_base.learn(
+                    error_pattern=user_input or "automated_fix",
+                    solution=parsed.summary,
+                    files=parsed.affected_files
+                )
 
         session = SessionRecord(
             session_id=session_id,
@@ -261,6 +289,7 @@ class AgentOrchestrator:
             comparison=comparison,
         )
         await self.session_writer.write(session)
+        self.knowledge_base.save(self.settings.state_dir / "knowledge_base.json")
         self.logger.info(
             "Completed run: mode=%s workspace=%s session=%s backend_model=%s files=%s context_chars=%s status=success",
             mode.value,
@@ -568,3 +597,11 @@ class AgentOrchestrator:
             winner=winner,
             final_answer=final_parsed
         )
+
+    async def _run_diagnostic(self, workspace_path: Path) -> str | None:
+        self.logger.info("Running pre-flight diagnostic...")
+        # Try running pytest
+        res = await execute_command("pytest --maxfail=3", cwd=str(workspace_path.resolve()))
+        if res.returncode != 0:
+            return f"Tests are failing:\nSTDOUT: {res.stdout[:500]}\nSTDERR: {res.stderr[:500]}"
+        return None

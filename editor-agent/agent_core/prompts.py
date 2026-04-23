@@ -53,6 +53,7 @@ def build_prompt(
     user_input: str | None,
     changed_files: list[str] | None = None,
     diff_text: str | None = None,
+    past_lessons: list[str] | None = None,
 ) -> PromptBundle:
     header = [
         f"MODE: {mode.value}",
@@ -73,6 +74,10 @@ def build_prompt(
         header.append(f"CHANGED_FILES: {changed_files}")
     if diff_text:
         header.append(f"DIFF_PROVIDED: yes")
+    if past_lessons:
+        header.append("PAST_LESSONS_LEARNED:")
+        for lesson in past_lessons:
+            header.append(f"- {lesson}")
 
     context_blocks: list[str] = []
     for file_context in selected_files:

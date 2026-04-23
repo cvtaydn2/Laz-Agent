@@ -1,0 +1,18 @@
+{
+  "entries": {
+    "UnicodeEncodeError: 'charmap' codec can't encode characters": {
+      "pattern": "UnicodeEncodeError: 'charmap' codec can't encode characters",
+      "solution_summary": "Windows terminal encoding issue. Use _safe_panel or similar to sanitize non-ASCII characters.",
+      "success_count": 5,
+      "last_applied": "2026-04-23T19:30:00.000000",
+      "files_involved": ["agent_core/output/formatter.py"]
+    },
+    "NvidiaTimeoutError": {
+      "pattern": "NvidiaTimeoutError",
+      "solution_summary": "Increase timeout_seconds in Settings or reduce workspace context selection size.",
+      "success_count": 3,
+      "last_applied": "2026-04-23T19:35:00.000000",
+      "files_involved": ["agent_core/config.py", "agent_core/llm/nvidia.py"]
+    }
+  }
+}
