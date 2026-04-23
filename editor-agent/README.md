@@ -166,44 +166,50 @@ Example Continue-style request body:
 }
 ```
 
-## OpenAI-Compatible Endpoints
+## OpenAI Compatibility
 
-- `GET /v1/models`
-- `POST /v1/chat/completions`
+### Supported endpoints
 
-Rules:
+| Endpoint | Status |
+|---|---|
+| `GET /v1/models` | ✅ Full |
+| `POST /v1/chat/completions` | ✅ Full |
+| `POST /v1/responses` | ❌ Not implemented |
 
-- non-streaming only
-- `workspace` is preferred
-- external model id stays `laz-agent`
-- internal NVIDIA backend model can be changed independently
-- `stream=true` is supported with minimal OpenAI-style SSE
+### Supported request fields
 
-Supported `extra_body` fields:
+| Field | Status |
+|---|---|
+| `messages` (string content) | ✅ |
+| `messages` (multipart content) | ✅ text parts extracted |
+| `messages` with `tool_calls` | ✅ accepted, passed through |
+| `stream` | ✅ true token-by-token SSE |
+| `temperature` | ✅ honoured (clamped to `[0.0, 2.0]`) |
+| `max_tokens` | ✅ |
+| `tools` | ✅ passed through to NVIDIA NIM |
+| `tool_choice` | ✅ passed through to NVIDIA NIM |
+| `response_format` | ✅ accepted (not enforced locally) |
+| `role: developer` | ✅ mapped to `system` |
 
-- `workspace`
-- `mode`
-- `changed_files`
-- `diff`
+### Not yet supported
 
-Workspace resolution order:
+- `/v1/responses` endpoint
+- Full assistant/tool roundtrip execution (tool results are not re-fed to the model)
+- Audio / image content parts
 
-1. `extra_body.workspace`
-2. `extraBody.workspace`
-3. `metadata.workspace`
-4. top-level `workspace`
-5. `AGENT_DEFAULT_WORKSPACE`
-6. server process current working directory
+### Continue configuration
 
-Allowed modes:
+```yaml
+models:
+  - name: laz-agent
+    provider: openai
+    model: laz-agent
+    apiBase: http://localhost:8000/v1
+    apiKey: dummy
+    useResponsesApi: false
+```
 
-- `ask`
-- `analyze`
-- `suggest`
-- `patch-preview`
-- `review`
 
-`apply` is not exposed through the OpenAI-compatible endpoint.
 
 ## Examples
 

@@ -62,6 +62,9 @@ class Settings(BaseModel):
     server_host: str = Field(default="127.0.0.1", alias="AGENT_SERVER_HOST")
     server_port: int = Field(default=8000, alias="AGENT_SERVER_PORT")
     default_workspace: str = Field(default="", alias="AGENT_DEFAULT_WORKSPACE")
+    # Optional inbound bearer auth for the OpenAI-compatible proxy.
+    # Leave empty to disable auth (default for local use).
+    proxy_api_key: str = Field(default="", alias="PROXY_API_KEY")
 
     @classmethod
     @lru_cache(maxsize=1)
@@ -83,6 +86,7 @@ class Settings(BaseModel):
                 "AGENT_SERVER_HOST": os.getenv("AGENT_SERVER_HOST", "127.0.0.1"),
                 "AGENT_SERVER_PORT": int(os.getenv("AGENT_SERVER_PORT", "8000")),
                 "AGENT_DEFAULT_WORKSPACE": os.getenv("AGENT_DEFAULT_WORKSPACE", os.getcwd()),
+                "PROXY_API_KEY": os.getenv("PROXY_API_KEY", ""),
             }
         )
         settings.ensure_state_dirs()

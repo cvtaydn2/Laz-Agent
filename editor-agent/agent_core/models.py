@@ -184,9 +184,14 @@ class ChatMessage(BaseModel):
 
 
 class ModelResponse(BaseModel):
-    content: str
+    content: str = ""
     usage: dict[str, Any] = Field(default_factory=dict)
     status: str = "ok"
+    finish_reason: str | None = None
+    # Raw tool_calls list from the provider (list of dicts matching OpenAI schema)
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    # Full raw response payload for debugging / passthrough
+    raw_response: dict[str, Any] | None = None
 
 
 def utc_now() -> datetime:

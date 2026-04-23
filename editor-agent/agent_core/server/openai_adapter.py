@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
-from agent_core.models import AgentMode, SessionRecord
+from agent_core.models import AgentMode, ChatMessage, SessionRecord
 from agent_core.config import Settings
 from agent_core.server.openai_schemas import (
     OpenAIChatCompletionRequest,
@@ -26,6 +26,97 @@ OPENAI_ALLOWED_MODES = {
     AgentMode.REVIEW.value,
 }
 
+# Extensions recognised as code/config files for heuristic path detection
+_ALLOWED_EXTS = {
+    "py", "ts", "tsx", "js", "jsx", "json", "md", "yml", "yaml",
+    "toml", "ini", "cfg", "sh", "go", "rs", "java", "kt", "cs",
+    "cpp", "c", "h", "hpp", "sql", "html", "css", "txt",
+}
+
+
+# ---------------------------------------------------------------------------
+# Content helpers
+# ---------------------------------------------------------------------------
+
+def _content_to_text(content: str | list[dict[str, Any]] | None) -> str:
+    """Flatten any OpenAI content shape to a plain string."""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content.strip()
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "text" and isinstance(item.get("text"), str):
+                text = item["text"].strip()
+                if text:
+                    parts.append(text)
+        return "\n".join(parts).strip()
+    return ""
+
+
+# ---------------------------------------------------------------------------
+# Message normalisation
+# ---------------------------------------------------------------------------
+
+def normalize_openai_messages(messages: list[OpenAIMessage]) -> list[ChatMessage]:
+    """Convert OpenAI message list to internal ChatMessage list, preserving roles.
+
+    - Skips messages with no usable text content.
+    - Maps "developer" → "system" (OpenAI o-series convention).
+    - Handles tool messages with a synthetic text fallback.
+    """
+    normalized: list[ChatMessage] = []
+    for message in messages:
+        role = (message.role or "").strip().lower()
+        if role not in {"system", "developer", "user", "assistant", "tool"}:
+            continue
+
+        text = _content_to_text(message.content)
+
+        if role == "developer":
+            role = "system"
+
+        if role == "tool":
+            # Tool result messages: use text if present, else synthetic placeholder
+            text = text or f"[tool result id={message.tool_call_id or 'unknown'}]"
+
+        if role == "assistant" and not text and message.tool_calls:
+            # Assistant message that only contains tool_calls — skip for now;
+            # the local agent does not execute tool calls.
+            continue
+
+        if text:
+            normalized.append(ChatMessage(role=role, content=text))
+
+    return normalized
+
+
+def extract_last_user_text(messages: list[OpenAIMessage]) -> str | None:
+    """Return the text of the last user-role message, or the last non-empty message."""
+    for message in reversed(messages):
+        if (message.role or "").strip().lower() == "user":
+            text = _content_to_text(message.content)
+            if text:
+                return text
+    # Fallback: last non-empty message of any role
+    for message in reversed(messages):
+        text = _content_to_text(message.content)
+        if text:
+            return text
+    return None
+
+
+# Keep the old name as an alias so existing call-sites don't break
+def extract_user_message(messages: list[OpenAIMessage]) -> str | None:
+    return extract_last_user_text(messages)
+
+
+# ---------------------------------------------------------------------------
+# Request field extractors
+# ---------------------------------------------------------------------------
 
 def build_openai_models_response() -> OpenAIModelsResponse:
     created = int(datetime.now(timezone.utc).timestamp())
@@ -39,42 +130,20 @@ def build_openai_models_response() -> OpenAIModelsResponse:
     )
 
 
-def extract_user_message(messages: list[OpenAIMessage]) -> str | None:
-    """Return the last non-empty user message text.
-
-    Role semantics are preserved in the full messages list that gets forwarded
-    to the LLM.  This function is only used to extract the *user intent* string
-    for workspace ranking and trivial-ask detection — it does NOT collapse the
-    whole conversation into a single string.
-    """
-    for message in reversed(messages):
-        if message.role == "user":
-            text = _content_to_text(message.content)
-            if text:
-                return text
-    # Fallback: last non-empty message of any role
-    for message in reversed(messages):
-        text = _content_to_text(message.content)
-        if text:
-            return text
-    return None
-
-
 def extract_request_workspace(request: OpenAIChatCompletionRequest) -> str | None:
-    # 1. Check common metadata/extra_body keys
     for container in (request.extra_body, request.metadata):
         if isinstance(container, dict):
-            # Check multiple possible keys
-            for key in ("workspace", "working_directory", "workingDirectory", "cwd", "root", "rootPath", "projectPath", "baseDir"):
+            for key in (
+                "workspace", "working_directory", "workingDirectory",
+                "cwd", "root", "rootPath", "projectPath", "baseDir",
+            ):
                 val = container.get(key)
                 if isinstance(val, str) and val.strip():
                     return val.strip()
 
-    # 2. Check top-level (non-standard but possible)
     if request.workspace and request.workspace.strip():
         return request.workspace.strip()
 
-    # 3. Fallback to settings
     settings = Settings.load()
     if settings.default_workspace.strip():
         return settings.default_workspace.strip()
@@ -130,7 +199,7 @@ def extract_diff(request: OpenAIChatCompletionRequest) -> str | None:
 def extract_preferred_files(request: OpenAIChatCompletionRequest) -> list[str]:
     preferred: set[str] = set()
 
-    # 1. Check explicit metadata
+    # 1. Explicit metadata fields
     for container in (request.extra_body, request.metadata):
         if isinstance(container, dict):
             val = container.get("preferred_files") or container.get("active_files")
@@ -138,21 +207,50 @@ def extract_preferred_files(request: OpenAIChatCompletionRequest) -> list[str]:
                 for f in val:
                     preferred.add(str(f).replace("\\", "/").strip())
 
-    # 2. Heuristic: scan message history for explicit file paths (must contain a slash)
+    # 2. Heuristic: scan last 5 messages for path-like strings.
+    #    A valid path must contain at least one "/" separator AND end with a
+    #    recognised extension.  Plain dotted words (e.g. "e.g.", "i.e.") are
+    #    excluded because they lack a directory component.
     import re
-    # Only match strings that look like real paths: must have at least one directory separator
     path_pattern = re.compile(r'([a-zA-Z0-9_\-]+(?:/[a-zA-Z0-9_\-\.]+)+)')
 
     for msg in request.messages[-5:]:
         text = _content_to_text(msg.content)
         for match in path_pattern.findall(text):
-            # Must end with a recognised code/config extension
-            ext = match.rsplit(".", 1)[-1] if "." in match else ""
-            if ext in {"py", "js", "ts", "tsx", "jsx", "json", "md", "txt", "yml", "yaml", "html", "css"}:
-                preferred.add(match.replace("\\", "/").strip())
+            normalized = match.replace("\\", "/").strip()
+            ext = normalized.rsplit(".", 1)[-1].lower() if "." in normalized else ""
+            if "/" in normalized and ext in _ALLOWED_EXTS and " " not in normalized:
+                preferred.add(normalized)
 
     return sorted(list(preferred))
 
+
+# ---------------------------------------------------------------------------
+# Tool payload helpers
+# ---------------------------------------------------------------------------
+
+def extract_tools_payload(request: OpenAIChatCompletionRequest) -> list[dict[str, Any]] | None:
+    """Serialise request.tools to plain dicts for the NVIDIA provider."""
+    if not request.tools:
+        return None
+    return [tool.model_dump(exclude_none=True) for tool in request.tools]
+
+
+def extract_tool_choice_payload(request: OpenAIChatCompletionRequest) -> str | dict[str, Any] | None:
+    """Serialise request.tool_choice to a provider-compatible value."""
+    tc = request.tool_choice
+    if tc is None:
+        return None
+    if isinstance(tc, str):
+        return tc
+    if hasattr(tc, "model_dump"):
+        return tc.model_dump(exclude_none=True)
+    return tc
+
+
+# ---------------------------------------------------------------------------
+# Response builders
+# ---------------------------------------------------------------------------
 
 def build_openai_response(
     session: SessionRecord,
@@ -235,7 +333,11 @@ def json_review_text(session: SessionRecord) -> str:
         "summary": parsed.summary or "Review completed.",
         "findings": findings,
         "risks": parsed.risks_text or "\n".join(parsed.risks).strip() or "No major risks identified.",
-        "next_steps": parsed.next_steps_text or "\n".join(parsed.next_steps).strip() or "Review the findings and apply the highest-confidence fixes first.",
+        "next_steps": (
+            parsed.next_steps_text
+            or "\n".join(parsed.next_steps).strip()
+            or "Review the findings and apply the highest-confidence fixes first."
+        ),
     }
     return json.dumps(payload, indent=2, ensure_ascii=False)
 
@@ -256,15 +358,32 @@ def build_openai_fallback_response(model: str, content: str) -> OpenAIChatComple
     )
 
 
+# ---------------------------------------------------------------------------
+# SSE chunk formatter
+# ---------------------------------------------------------------------------
+
 def format_openai_stream_chunk(
     *,
     model: str,
-    content: str | None,
     completion_id: str,
     created: int,
+    delta_content: str | None = None,
+    delta_tool_calls: list[dict[str, Any]] | None = None,
     finish_reason: str | None = None,
+    # Legacy positional-keyword alias kept for call-sites that still use `content=`
+    content: str | None = None,
 ) -> str:
-    chunk = {
+    # Support old callers that pass `content=` instead of `delta_content=`
+    if delta_content is None and content is not None:
+        delta_content = content
+
+    delta: dict[str, Any] = {}
+    if delta_content is not None:
+        delta["content"] = delta_content
+    if delta_tool_calls:
+        delta["tool_calls"] = delta_tool_calls
+
+    payload = {
         "id": completion_id,
         "object": "chat.completion.chunk",
         "created": created,
@@ -272,13 +391,17 @@ def format_openai_stream_chunk(
         "choices": [
             {
                 "index": 0,
-                "delta": {"content": content} if content is not None else {},
+                "delta": delta,
                 "finish_reason": finish_reason,
             }
         ],
     }
-    return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
+    return f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
 
+
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
 
 def _append_section(target: list[str], title: str, items: list[str]) -> None:
     normalized_items = [item.strip() for item in items if item and item.strip()]
@@ -286,19 +409,3 @@ def _append_section(target: list[str], title: str, items: list[str]) -> None:
         return
     body = "\n".join(f"- {item}" for item in normalized_items)
     target.append(f"{title}:\n{body}")
-
-
-def _content_to_text(content: str | list[dict[str, Any]] | None) -> str:
-    if isinstance(content, str):
-        return content.strip()
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if not isinstance(item, dict):
-                continue
-            if item.get("type") == "text" and isinstance(item.get("text"), str):
-                text = item["text"].strip()
-                if text:
-                    parts.append(text)
-        return "\n".join(parts).strip()
-    return ""

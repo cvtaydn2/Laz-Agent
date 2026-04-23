@@ -7,7 +7,6 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from agent_core.config import ensure_environment_ready
 from agent_core.models import AgentMode
 from agent_core.llm.nvidia import NvidiaInferenceError
 from agent_core.server.openai_adapter import (
@@ -20,10 +19,12 @@ from agent_core.server.openai_adapter import (
     extract_diff,
     extract_request_mode,
     extract_request_workspace,
-    session_to_plain_text,
-    extract_user_message,
+    extract_last_user_text,
+    normalize_openai_messages,
     validate_openai_mode,
     extract_preferred_files,
+    extract_tools_payload,
+    extract_tool_choice_payload,
 )
 from agent_core.server.metrics import HTTP_REQUESTS_TOTAL
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
@@ -42,18 +43,38 @@ from agent_core.output.writers import SessionWriter
 from agent_core.config import Settings
 from agent_core.logger import configure_logger as _configure_logger
 
+
 def _get_logger():
     return _configure_logger(Settings.load().logs_dir / "editor-agent.log")
 
 
-@asynccontextmanager
-async def lifespan(_: FastAPI):
-    # Warn if API key is missing but do NOT crash — /health will report ok=False
-    try:
-        ensure_environment_ready()
-    except RuntimeError as exc:
-        _get_logger().warning("Startup warning: %s", exc)
+def _check_proxy_auth(raw_request: Request) -> None:
+    """Optional inbound bearer auth.  Only enforced when PROXY_API_KEY is set."""
     settings = Settings.load()
+    required_key = getattr(settings, "proxy_api_key", None)
+    if not required_key:
+        return
+    auth = raw_request.headers.get("authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing bearer token.")
+    token = auth.removeprefix("Bearer ").strip()
+    if token != required_key:
+        raise HTTPException(status_code=401, detail="Invalid bearer token.")
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Load settings and record env readiness — do NOT crash if key is missing.
+    # /health will report ok=False so operators can detect the problem without
+    # the server being completely unavailable.
+    settings = Settings.load()
+    app.state.env_ready = bool(settings.nvidia_api_key)
+    app.state.env_error = (
+        None if app.state.env_ready else "NVIDIA_API_KEY is not configured."
+    )
+    if not app.state.env_ready:
+        _get_logger().warning("Startup warning: %s", app.state.env_error)
+
     writer = SessionWriter(settings)
     pruned_count = writer.prune_old_sessions(max_age_days=7)
     if pruned_count > 0:
@@ -70,11 +91,8 @@ async def track_metrics_middleware(request: Request, call_next):
     endpoint = request.url.path
     response = await call_next(request)
     status = response.status_code
-    
-    # Exclude /metrics from tracking to avoid noise
     if endpoint != "/metrics":
         HTTP_REQUESTS_TOTAL.labels(method=method, endpoint=endpoint, status=status).inc()
-        
     return response
 
 
@@ -112,8 +130,12 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
 
 
 @app.get("/health", response_model=HealthResponse)
-def health() -> HealthResponse:
+def health(request: Request) -> HealthResponse:
     status = build_health_status()
+    # Reflect startup env check in the health response
+    env_ready = getattr(request.app.state, "env_ready", True)
+    if not env_ready:
+        status.ok = False
     return HealthResponse(ok=status.ok, health=status)
 
 
@@ -150,13 +172,19 @@ def list_models() -> OpenAIModelsResponse:
 async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Request):
     logger = _get_logger()
     try:
+        # Optional proxy auth
+        _check_proxy_auth(raw_request)
+
         try:
             body = await raw_request.json()
             logger.debug("Raw Body Keys: %s", list(body.keys()))
             if "extraBody" in body:
                 logger.debug("Found extraBody: %s", list(body["extraBody"].keys()))
             if "metadata" in body:
-                logger.debug("Found metadata: %s", list(body["metadata"].keys()) if isinstance(body["metadata"], dict) else body["metadata"])
+                logger.debug(
+                    "Found metadata: %s",
+                    list(body["metadata"].keys()) if isinstance(body["metadata"], dict) else body["metadata"],
+                )
         except Exception:
             pass
 
@@ -165,27 +193,38 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
         if not workspace:
             raise HTTPException(
                 status_code=400,
-                detail="A workspace path is required under extra_body.workspace, metadata.workspace, or top-level workspace.",
+                detail=(
+                    "A workspace path is required under extra_body.workspace, "
+                    "metadata.workspace, or top-level workspace."
+                ),
             )
 
         req_mode = extract_request_mode(request)
-        logger.debug("Raw mode from request: %s", req_mode)
         mode_value = validate_openai_mode(req_mode)
         logger.debug("Validated mode: %s", mode_value)
 
-        user_message = extract_user_message(request.messages)
-        logger.debug("Message end: %r", user_message[-80:] if user_message else None)
-        logger.debug("Extracted user message (len=%d): %s...", len(user_message) if user_message else 0, (user_message or "")[:50])
-        logger.debug("extra_body: %s", request.extra_body)
-        logger.debug("metadata: %s", request.metadata)
+        # Normalise messages — preserves role semantics
+        normalized_messages = normalize_openai_messages(request.messages)
+        last_user_text = extract_last_user_text(request.messages)
+        logger.debug(
+            "Extracted user text (len=%d): %s...",
+            len(last_user_text) if last_user_text else 0,
+            (last_user_text or "")[:60],
+        )
 
-        if not user_message:
+        if not normalized_messages or not last_user_text:
             raise HTTPException(
                 status_code=400,
                 detail="At least one non-empty user message is required.",
             )
 
-        # --- STREAM PATH ---
+        # Serialise tool payloads for the provider
+        tools_payload = extract_tools_payload(request)
+        tool_choice_payload = extract_tool_choice_payload(request)
+
+        # ----------------------------------------------------------------
+        # STREAM PATH — true token-by-token SSE via stream_agent()
+        # ----------------------------------------------------------------
         if request.stream:
             created = int(datetime.now(timezone.utc).timestamp())
             completion_id = f"chatcmpl-stream-{created}"
@@ -193,39 +232,33 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
             async def event_stream():
                 try:
                     logger.debug("Calling stream_agent (true token streaming)...")
-                    has_content = False
                     async for chunk in stream_agent(
                         AgentMode(mode_value),
                         workspace,
-                        user_message,
+                        last_user_text,
                         temperature_override=request.temperature,
                         max_tokens_override=request.max_tokens,
                         changed_files=extract_changed_files(request),
                         diff_text=extract_diff(request),
                         preferred_files=extract_preferred_files(request),
+                        tools=tools_payload,
+                        tool_choice=tool_choice_payload,
                     ):
-                        if chunk:
-                            has_content = True
-                            yield format_openai_stream_chunk(
-                                model=request.model,
-                                content=chunk,
-                                completion_id=completion_id,
-                                created=created,
-                            )
-                    yield format_openai_stream_chunk(
-                        model=request.model,
-                        content=None,
-                        completion_id=completion_id,
-                        created=created,
-                        finish_reason="stop",
-                    )
+                        yield format_openai_stream_chunk(
+                            model=request.model,
+                            completion_id=completion_id,
+                            created=created,
+                            delta_content=chunk.get("content"),
+                            delta_tool_calls=chunk.get("tool_calls") or None,
+                            finish_reason=chunk.get("finish_reason"),
+                        )
                     yield "data: [DONE]\n\n"
                 except NvidiaInferenceError as exc:
                     yield format_openai_stream_chunk(
                         model=request.model,
-                        content=exc.user_message,
                         completion_id=completion_id,
                         created=created,
+                        delta_content=exc.user_message,
                         finish_reason="stop",
                     )
                     yield "data: [DONE]\n\n"
@@ -233,9 +266,9 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
                     logger.exception("Unhandled error in stream_agent")
                     yield format_openai_stream_chunk(
                         model=request.model,
-                        content=f"The local agent could not complete the request: {str(exc)}",
                         completion_id=completion_id,
                         created=created,
+                        delta_content=f"The local agent could not complete the request: {exc}",
                         finish_reason="stop",
                     )
                     yield "data: [DONE]\n\n"
@@ -246,12 +279,14 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
 
-        # --- NON-STREAM PATH ---
+        # ----------------------------------------------------------------
+        # NON-STREAM PATH
+        # ----------------------------------------------------------------
         logger.debug("Calling run_agent...")
         session = await run_agent(
             AgentMode(mode_value),
             workspace,
-            user_message,
+            last_user_text,
             temperature_override=request.temperature,
             max_tokens_override=request.max_tokens,
             changed_files=extract_changed_files(request),
@@ -268,15 +303,17 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
     except NvidiaInferenceError as exc:
         if request.stream:
             created = int(datetime.now(timezone.utc).timestamp())
+
             async def error_event_stream():
                 yield format_openai_stream_chunk(
                     model=request.model,
-                    content=exc.user_message,
                     completion_id=f"chatcmpl-error-{created}",
                     created=created,
-                    finish_reason="stop"
+                    delta_content=exc.user_message,
+                    finish_reason="stop",
                 )
                 yield "data: [DONE]\n\n"
+
             return StreamingResponse(
                 error_event_stream(),
                 media_type="text/event-stream",
@@ -284,17 +321,23 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
             )
         return build_openai_fallback_response(model=request.model, content=exc.user_message)
     except Exception:
+        logger.exception("Unhandled error in chat_completions")
         if request.stream:
             created = int(datetime.now(timezone.utc).timestamp())
+
             async def generic_error_stream():
                 yield format_openai_stream_chunk(
                     model=request.model,
-                    content="The local agent could not complete the request. Please retry with a smaller request or a narrower workspace context.",
                     completion_id=f"chatcmpl-error-{created}",
                     created=created,
-                    finish_reason="stop"
+                    delta_content=(
+                        "The local agent could not complete the request. "
+                        "Please retry with a smaller request or a narrower workspace context."
+                    ),
+                    finish_reason="stop",
                 )
                 yield "data: [DONE]\n\n"
+
             return StreamingResponse(
                 generic_error_stream(),
                 media_type="text/event-stream",
@@ -302,5 +345,8 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
             )
         return build_openai_fallback_response(
             model=request.model,
-            content="The local agent could not complete the request. Please retry with a smaller request or a narrower workspace context.",
+            content=(
+                "The local agent could not complete the request. "
+                "Please retry with a smaller request or a narrower workspace context."
+            ),
         )

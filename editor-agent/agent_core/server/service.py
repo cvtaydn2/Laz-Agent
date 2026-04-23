@@ -77,12 +77,19 @@ def build_safe_fallback_session(
 
 
 def build_health_status() -> HealthStatus:
+    # Read the API key directly from the environment so the health endpoint
+    # always reflects the *current* state, bypassing the Settings lru_cache.
+    from agent_core.config import load_environment_from_cwd
+    import os
+    load_environment_from_cwd()
+    api_key = os.getenv("NVIDIA_API_KEY", "")
+    # Use cached settings for non-sensitive fields (base_url, model, etc.)
     settings = Settings.load()
     return HealthStatus(
-        ok=bool(settings.nvidia_api_key),
+        ok=bool(api_key),
         base_url=str(settings.nvidia_base_url),
         model=settings.nvidia_model,
-        api_key_configured=bool(settings.nvidia_api_key),
+        api_key_configured=bool(api_key),
         session_dir=str(settings.session_dir),
         timeout_seconds=settings.timeout_seconds,
     )
@@ -162,8 +169,14 @@ async def stream_agent(
     changed_files: list[str] | None = None,
     diff_text: str | None = None,
     preferred_files: list[str] | None = None,
-) -> AsyncIterable[str]:
-    orchestrator = build_orchestrator()
+    tools: list[dict] | None = None,
+    tool_choice: str | dict | None = None,
+):
+    """Yield structured chunk dicts from the orchestrator stream.
+
+    Each dict: {"content": str | None, "tool_calls": list, "finish_reason": str | None, "raw": dict}
+    """
+    orchestrator = get_orchestrator()
     workspace_path = resolve_workspace_or_400(workspace)
     async for chunk in orchestrator.stream_run(
         mode=mode,
@@ -174,5 +187,7 @@ async def stream_agent(
         changed_files=changed_files,
         diff_text=diff_text,
         preferred_files=preferred_files,
+        tools=tools,
+        tool_choice=tool_choice,
     ):
         yield chunk

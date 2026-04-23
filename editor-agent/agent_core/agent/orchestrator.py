@@ -390,16 +390,78 @@ class AgentOrchestrator:
         changed_files: list[str] | None = None,
         diff_text: str | None = None,
         preferred_files: list[str] | None = None,
-    ) -> AsyncIterable[str]:
+        tools: list[dict] | None = None,
+        tool_choice: str | dict | None = None,
+    ) -> AsyncIterable[dict]:
+        """Yield structured chunk dicts from the LLM stream.
+
+        Each dict has the shape:
+            {"content": str | None, "tool_calls": list, "finish_reason": str | None, "raw": dict}
+
+        Trivial greeting responses are yielded as a single synthetic chunk.
+        """
         mode = self._normalize_mode(mode)
-        
-        # Build context (same as run())
+
+        # Fast-path: trivial greeting — no LLM call needed
+        trivial_response = self._build_trivial_ask_response(mode, workspace_path, user_input)
+        if trivial_response is not None:
+            text = trivial_response.parsed_response.summary or trivial_response.raw_response
+            if text:
+                yield {"content": text, "tool_calls": [], "finish_reason": None, "raw": {}}
+            yield {"content": None, "tool_calls": [], "finish_reason": "stop", "raw": {}}
+            return
+
+        # Build workspace context + prompt (shared with run())
+        prompt_bundle, selected_context, workspace_summary = await self._prepare_prompt_bundle(
+            mode=mode,
+            workspace_path=workspace_path,
+            user_input=user_input,
+            changed_files=changed_files,
+            diff_text=diff_text,
+            preferred_files=preferred_files,
+        )
+
+        messages = [
+            ChatMessage(role="system", content=prompt_bundle.system_prompt),
+            ChatMessage(role="user", content=prompt_bundle.user_prompt),
+        ]
+
+        async for chunk in self.client.chat_stream(
+            messages,
+            temperature_override=temperature_override,
+            max_tokens_override=max_tokens_override,
+            tools=tools,
+            tool_choice=tool_choice,
+        ):
+            yield chunk
+
+        self.logger.info(
+            "Completed stream: mode=%s workspace=%s backend_model=%s",
+            mode.value,
+            workspace_path,
+            self.settings.nvidia_model,
+        )
+
+    async def _prepare_prompt_bundle(
+        self,
+        *,
+        mode: AgentMode,
+        workspace_path: Path,
+        user_input: str | None,
+        changed_files: list[str] | None,
+        diff_text: str | None,
+        preferred_files: list[str] | None,
+    ):
+        """Shared workspace scan + prompt build used by both run() and stream_run()."""
+        from agent_core.models import PromptBundle
+
         use_workspace = self._should_use_workspace(
             mode=mode,
             user_input=user_input,
             changed_files=changed_files,
             diff_text=diff_text,
         )
+
         if use_workspace:
             scan_results, workspace_summary = await self.scanner.scan(workspace_path)
             ranked_files = await self.ranker.rank(
@@ -409,10 +471,19 @@ class AgentOrchestrator:
                 user_input,
                 preferred_files=preferred_files or changed_files,
             )
-            selected_context, _ = await self.reader.read_ranked_files(workspace_path, ranked_files)
+            selected_context, reader_notes = await self.reader.read_ranked_files(
+                workspace_path, ranked_files
+            )
+            workspace_summary.notes.extend(reader_notes)
+            workspace_summary.preferred_files = preferred_files or changed_files or []
         else:
             selected_context = []
             workspace_summary = self._build_empty_workspace_summary(workspace_path, changed_files)
+
+        past_lessons: list[str] = []
+        if user_input:
+            lessons = self.knowledge_base.query(user_input)
+            past_lessons = [f"{l.pattern}: {l.solution_summary}" for l in lessons[:3]]
 
         prompt_bundle = build_prompt(
             mode,
@@ -421,29 +492,9 @@ class AgentOrchestrator:
             user_input,
             changed_files=changed_files,
             diff_text=diff_text,
+            past_lessons=past_lessons,
         )
-        messages = [
-            ChatMessage(role="system", content=prompt_bundle.system_prompt),
-            ChatMessage(role="user", content=prompt_bundle.user_prompt),
-        ]
-
-        full_content = []
-        async for chunk in self.client.chat_stream(
-            messages,
-            temperature_override=temperature_override,
-            max_tokens_override=max_tokens_override,
-        ):
-            full_content.append(chunk)
-            yield chunk
-
-        # Final background recording of the session (optional/async)
-        # For simplicity in this step, we just log that the stream finished
-        self.logger.info(
-            "Completed stream: mode=%s workspace=%s backend_model=%s",
-            mode.value,
-            workspace_path,
-            self.settings.nvidia_model,
-        )
+        return prompt_bundle, selected_context, workspace_summary
 
     def _normalize_mode(self, mode: AgentMode | str) -> AgentMode:
         if isinstance(mode, AgentMode):
@@ -458,12 +509,34 @@ class AgentOrchestrator:
         mode: AgentMode,
         workspace_path: Path,
         user_input: str | None,
+        changed_files: list[str] | None = None,
+        diff_text: str | None = None,
+        preferred_files: list[str] | None = None,
     ) -> SessionRecord | None:
+        # Only intercept plain ASK requests
         if not user_input or mode != AgentMode.ASK:
             return None
 
-        # Check only the last 120 chars to ignore long boilerplate injected by Continue
-        tail = user_input.strip()[-120:].lower()
+        # If there is any file/diff context, always go to the LLM
+        if changed_files or diff_text or preferred_files:
+            return None
+
+        stripped = user_input.strip()
+
+        # Long messages are never pure greetings
+        if len(stripped) > 60:
+            return None
+
+        # Multi-line messages contain real content
+        if "\n" in stripped:
+            return None
+
+        # Continue and other clients inject boilerplate — skip fast-path
+        if "<important_rules>" in stripped.lower():
+            return None
+
+        # Check only the tail to ignore any leading boilerplate
+        tail = stripped[-120:].lower()
 
         # Turkish and English greetings / small-talk that don't need LLM
         tr_greetings = {
@@ -486,38 +559,39 @@ class AgentOrchestrator:
                     is_turkish = True
                 break
 
-        if is_greeting:
-            if is_turkish:
-                response_text = (
-                    "Evet, buradayım! Ben Laz-Agent. "
-                    "Kod analizi yapabilir, hataları bulabilir veya yeni özellikler ekleyebilirim. "
-                    "Nasıl yardımcı olabilirim?"
-                )
-            else:
-                response_text = (
-                    "Yes, I'm here! I am Laz-Agent, your architectural assistant. "
-                    "I can analyze your code, hunt for bugs, or suggest improvements. "
-                    "How can I help you today?"
-                )
+        if not is_greeting:
+            return None
 
-            return SessionRecord(
-                session_id=build_session_id(mode),
-                created_at=utc_now(),
-                mode=mode,
-                workspace_path=str(workspace_path),
-                prompt=user_input,
-                user_input=user_input,
-                workspace_summary=self._build_empty_workspace_summary(workspace_path, None),
-                ranked_files=[],
-                selected_context=[],
-                raw_response=response_text,
-                parsed_response=ParsedAnswer(
-                    summary=response_text,
-                    raw_text=response_text,
-                    parse_strategy="raw_text",
-                ),
+        if is_turkish:
+            response_text = (
+                "Evet, buradayım! Ben Laz-Agent. "
+                "Kod analizi yapabilir, hataları bulabilir veya yeni özellikler ekleyebilirim. "
+                "Nasıl yardımcı olabilirim?"
             )
-        return None
+        else:
+            response_text = (
+                "Yes, I'm here! I am Laz-Agent, your architectural assistant. "
+                "I can analyze your code, hunt for bugs, or suggest improvements. "
+                "How can I help you today?"
+            )
+
+        return SessionRecord(
+            session_id=build_session_id(mode),
+            created_at=utc_now(),
+            mode=mode,
+            workspace_path=str(workspace_path),
+            prompt=user_input,
+            user_input=user_input,
+            workspace_summary=self._build_empty_workspace_summary(workspace_path, None),
+            ranked_files=[],
+            selected_context=[],
+            raw_response=response_text,
+            parsed_response=ParsedAnswer(
+                summary=response_text,
+                raw_text=response_text,
+                parse_strategy="raw_text",
+            ),
+        )
 
     def _should_use_workspace(
         self,
