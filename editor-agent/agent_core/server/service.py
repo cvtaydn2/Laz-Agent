@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import AsyncIterable
 
 from fastapi import HTTPException
 
@@ -8,7 +9,7 @@ from agent_core.agent.orchestrator import AgentOrchestrator
 from agent_core.config import Settings
 from agent_core.logger import configure_logger
 from agent_core.models import AgentMode, HealthStatus, ParsedAnswer, SessionRecord, WorkspaceSummary, build_session_id, utc_now
-from agent_core.nvidia_client import NvidiaBackendError, NvidiaTimeoutError
+from agent_core.llm.nvidia import NvidiaBackendError, NvidiaTimeoutError
 
 
 def resolve_workspace_or_400(workspace: str) -> Path:
@@ -83,7 +84,7 @@ def build_health_status() -> HealthStatus:
     )
 
 
-def run_agent(
+async def run_agent(
     mode: AgentMode,
     workspace: str,
     user_input: str | None,
@@ -98,7 +99,7 @@ def run_agent(
     orchestrator = build_orchestrator()
     workspace_path = resolve_workspace_or_400(workspace)
     try:
-        return orchestrator.run(
+        return await orchestrator.run(
             mode=mode,
             workspace_path=workspace_path,
             user_input=user_input,
@@ -146,3 +147,27 @@ def run_agent(
             message="The local agent hit an internal processing error before it could return a stable result. Please retry with a smaller request or a narrower workspace context.",
             note="Internal error fallback response generated.",
         )
+async def stream_agent(
+    mode: AgentMode,
+    workspace: str,
+    user_input: str | None,
+    *,
+    temperature_override: float | None = None,
+    max_tokens_override: int | None = None,
+    changed_files: list[str] | None = None,
+    diff_text: str | None = None,
+    preferred_files: list[str] | None = None,
+) -> AsyncIterable[str]:
+    orchestrator = build_orchestrator()
+    workspace_path = resolve_workspace_or_400(workspace)
+    async for chunk in orchestrator.stream_run(
+        mode=mode,
+        workspace_path=workspace_path,
+        user_input=user_input,
+        temperature_override=temperature_override,
+        max_tokens_override=max_tokens_override,
+        changed_files=changed_files,
+        diff_text=diff_text,
+        preferred_files=preferred_files,
+    ):
+        yield chunk

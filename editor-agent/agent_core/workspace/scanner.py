@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import asyncio
 from collections import Counter
 from pathlib import Path
 
@@ -13,7 +14,10 @@ class WorkspaceScanner:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def scan(self, workspace_path: Path) -> tuple[list[FileScanResult], WorkspaceSummary]:
+    async def scan(self, workspace_path: Path) -> tuple[list[FileScanResult], WorkspaceSummary]:
+        return await asyncio.to_thread(self._sync_scan, workspace_path)
+
+    def _sync_scan(self, workspace_path: Path) -> tuple[list[FileScanResult], WorkspaceSummary]:
         included: list[FileScanResult] = []
         skipped_files = 0
         extension_counter: Counter[str] = Counter()

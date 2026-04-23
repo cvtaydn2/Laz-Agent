@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import asyncio
 from pathlib import Path
 
 from agent_core.config import Settings
@@ -10,7 +9,24 @@ class WorkspaceRanker:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def rank(
+    async def rank(
+        self,
+        workspace_path: Path,
+        files: list[FileScanResult],
+        mode: AgentMode,
+        user_input: str | None,
+        preferred_files: list[str] | None = None,
+    ) -> list[RankedFile]:
+        return await asyncio.to_thread(
+            self._sync_rank,
+            workspace_path,
+            files,
+            mode,
+            user_input,
+            preferred_files
+        )
+
+    def _sync_rank(
         self,
         workspace_path: Path,
         files: list[FileScanResult],

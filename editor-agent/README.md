@@ -12,23 +12,20 @@ The default NVIDIA backend model is now:
 
 The project is optimized for:
 
-- stable code analysis
-- stable code review
-- non-streaming OpenAI-compatible requests
-- smaller, predictable workspace context
-- safe failure handling when the backend is slow or unavailable
+- high-performance asynchronous core (non-blocking)
+- real-time streaming (SSE) for immediate editor feedback
+- modular LLM provider abstraction (NVIDIA, OpenAI ready)
+- safe, efficient local workspace scanning and ranking
 
 ## Features
 
+- fully asynchronous architecture using Python `async/await` and `asyncio`
 - CLI commands for `health`, `analyze`, `ask`, `suggest`, `patch-preview`, and `apply`
-- FastAPI local server with custom endpoints and OpenAI-compatible endpoints
-- non-streaming `GET /v1/models`
-- non-streaming `POST /v1/chat/completions`
-- review mode with structured output
-- deterministic `.env` loading from the current working directory
-- fail-fast startup if `NVIDIA_API_KEY` is missing
-- bounded retries and timeout handling for NVIDIA requests
-- safe fallback responses when backend inference times out
+- FastAPI local server with true streaming (SSE) support
+- pluggable LLM Provider interface (NVIDIA, with OpenAI/Ollama extensibility)
+- high-performance Settings singleton with cached environment loading
+- robust workspace analysis with non-blocking file scanning
+- bounded retries and detailed diagnostic logging for backend stability
 
 ## Project Layout
 
@@ -40,13 +37,10 @@ editor-agent/
   requirements.txt
   main.py
   server.py
-  agent_core/
-    __init__.py
-    config.py
-    models.py
-    nvidia_client.py
-    prompts.py
-    logger.py
+    llm/
+      __init__.py
+      provider.py
+      nvidia.py
     workspace/
       __init__.py
       scanner.py
@@ -62,16 +56,6 @@ editor-agent/
       review_verifier.py
       response_parser.py
       suggester.py
-    tools/
-      __init__.py
-      apply_tools.py
-      file_tools.py
-      patch_tools.py
-      command_tools.py
-    output/
-      __init__.py
-      formatter.py
-      writers.py
     server/
       __init__.py
       api.py

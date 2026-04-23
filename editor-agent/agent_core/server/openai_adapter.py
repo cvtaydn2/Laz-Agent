@@ -238,45 +238,28 @@ def build_openai_fallback_response(model: str, content: str) -> OpenAIChatComple
     )
 
 
-def build_openai_streaming_chunks(
+def format_openai_stream_chunk(
     *,
     model: str,
-    content: str,
+    content: str | None,
     completion_id: str,
     created: int,
-) -> list[str]:
-    chunks = [
-        {
-            "id": completion_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model or OPENAI_COMPATIBLE_MODEL_ID,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {
-                        "role": "assistant",
-                        "content": content,
-                    },
-                    "finish_reason": None,
-                }
-            ],
-        },
-        {
-            "id": completion_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model or OPENAI_COMPATIBLE_MODEL_ID,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop",
-                }
-            ],
-        },
-    ]
-    return [f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n" for chunk in chunks] + ["data: [DONE]\n\n"]
+    finish_reason: str | None = None,
+) -> str:
+    chunk = {
+        "id": completion_id,
+        "object": "chat.completion.chunk",
+        "created": created,
+        "model": model or OPENAI_COMPATIBLE_MODEL_ID,
+        "choices": [
+            {
+                "index": 0,
+                "delta": {"content": content} if content is not None else {},
+                "finish_reason": finish_reason,
+            }
+        ],
+    }
+    return f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n"
 
 
 def _append_section(target: list[str], title: str, items: list[str]) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from functools import lru_cache
 from pathlib import Path
 from typing import ClassVar
 
@@ -63,6 +64,7 @@ class Settings(BaseModel):
     default_workspace: str = Field(default="", alias="AGENT_DEFAULT_WORKSPACE")
 
     @classmethod
+    @lru_cache(maxsize=1)
     def load(cls) -> "Settings":
         load_environment_from_cwd()
         settings = cls.model_validate(
@@ -132,8 +134,6 @@ class Settings(BaseModel):
 def load_environment_from_cwd() -> str:
     dotenv_path = find_dotenv(usecwd=True)
     load_dotenv(dotenv_path=dotenv_path, override=True)
-    print(f"Loaded .env from: {dotenv_path}")
-    print(f"NVIDIA_API_KEY present: {bool(os.getenv('NVIDIA_API_KEY'))}")
     return dotenv_path
 
 

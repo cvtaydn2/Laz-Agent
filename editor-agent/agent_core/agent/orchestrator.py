@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from typing import Any, Iterable, AsyncIterable
 from pathlib import Path
 
 from agent_core.agent.review_verifier import ReviewVerifier
@@ -21,7 +22,8 @@ from agent_core.models import (
     build_session_id,
     utc_now,
 )
-from agent_core.nvidia_client import NvidiaBackendError, NvidiaClient, NvidiaTimeoutError
+from agent_core.llm import get_llm_provider
+from agent_core.llm.nvidia import NvidiaBackendError, NvidiaTimeoutError
 from agent_core.output.writers import ApplyLogWriter, PatchProposalWriter, SessionWriter
 from agent_core.prompts import build_prompt
 from agent_core.tools.apply_tools import ApplyEngine
@@ -37,7 +39,7 @@ class AgentOrchestrator:
         self.scanner = WorkspaceScanner(settings)
         self.ranker = WorkspaceRanker(settings)
         self.reader = WorkspaceReader(settings)
-        self.client = NvidiaClient(settings)
+        self.client = get_llm_provider(settings)
         self.planner = AgentPlanner()
         self.response_parser = ResponseParser()
         self.suggestion_policy = SuggestionPolicy()
@@ -50,7 +52,7 @@ class AgentOrchestrator:
         self.apply_engine = ApplyEngine(settings)
         self.logger = configure_logger(settings.logs_dir / "editor-agent.log")
 
-    def run(
+    async def run(
         self,
         mode: AgentMode | str,
         workspace_path: Path,
@@ -101,15 +103,15 @@ class AgentOrchestrator:
         )
 
         if use_workspace:
-            scan_results, workspace_summary = self.scanner.scan(workspace_path)
-            ranked_files = self.ranker.rank(
+            scan_results, workspace_summary = await self.scanner.scan(workspace_path)
+            ranked_files = await self.ranker.rank(
                 workspace_path,
                 scan_results,
                 mode,
                 user_input,
                 preferred_files=preferred_files or changed_files,
             )
-            selected_context, reader_notes = self.reader.read_ranked_files(workspace_path, ranked_files)
+            selected_context, reader_notes = await self.reader.read_ranked_files(workspace_path, ranked_files)
             workspace_summary.notes.extend(reader_notes)
             workspace_summary.preferred_files = preferred_files or changed_files or []
         else:
@@ -143,7 +145,7 @@ class AgentOrchestrator:
         self.logger.debug("System prompt length: %d", len(prompt_bundle.system_prompt))
         self.logger.debug("User prompt length: %d", len(prompt_bundle.user_prompt))
         try:
-            model_response = self.client.chat(
+            model_response = await self.client.chat(
                 messages,
                 temperature_override=temperature_override,
                 max_tokens_override=max_tokens_override,
@@ -231,6 +233,71 @@ class AgentOrchestrator:
             context_char_count,
         )
         return session
+
+    async def stream_run(
+        self,
+        mode: AgentMode | str,
+        workspace_path: Path,
+        user_input: str | None,
+        temperature_override: float | None = None,
+        max_tokens_override: int | None = None,
+        changed_files: list[str] | None = None,
+        diff_text: str | None = None,
+        preferred_files: list[str] | None = None,
+    ) -> AsyncIterable[str]:
+        mode = self._normalize_mode(mode)
+        
+        # Build context (same as run())
+        use_workspace = self._should_use_workspace(
+            mode=mode,
+            user_input=user_input,
+            changed_files=changed_files,
+            diff_text=diff_text,
+        )
+        if use_workspace:
+            scan_results, workspace_summary = await self.scanner.scan(workspace_path)
+            ranked_files = await self.ranker.rank(
+                workspace_path,
+                scan_results,
+                mode,
+                user_input,
+                preferred_files=preferred_files or changed_files,
+            )
+            selected_context, _ = await self.reader.read_ranked_files(workspace_path, ranked_files)
+        else:
+            selected_context = []
+            workspace_summary = self._build_empty_workspace_summary(workspace_path, changed_files)
+
+        prompt_bundle = build_prompt(
+            mode,
+            workspace_summary,
+            selected_context,
+            user_input,
+            changed_files=changed_files,
+            diff_text=diff_text,
+        )
+        messages = [
+            ChatMessage(role="system", content=prompt_bundle.system_prompt),
+            ChatMessage(role="user", content=prompt_bundle.user_prompt),
+        ]
+
+        full_content = []
+        async for chunk in self.client.chat_stream(
+            messages,
+            temperature_override=temperature_override,
+            max_tokens_override=max_tokens_override,
+        ):
+            full_content.append(chunk)
+            yield chunk
+
+        # Final background recording of the session (optional/async)
+        # For simplicity in this step, we just log that the stream finished
+        self.logger.info(
+            "Completed stream: mode=%s workspace=%s backend_model=%s",
+            mode.value,
+            workspace_path,
+            self.settings.nvidia_model,
+        )
 
     def _normalize_mode(self, mode: AgentMode | str) -> AgentMode:
         if isinstance(mode, AgentMode):

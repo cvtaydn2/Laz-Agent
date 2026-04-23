@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import asyncio
 from pathlib import Path
 
 from agent_core.config import Settings
@@ -11,7 +10,14 @@ class WorkspaceReader:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
 
-    def read_ranked_files(
+    async def read_ranked_files(
+        self,
+        workspace_path: Path,
+        ranked_files: list[RankedFile],
+    ) -> tuple[list[FileContext], list[str]]:
+        return await asyncio.to_thread(self._sync_read, workspace_path, ranked_files)
+
+    def _sync_read(
         self,
         workspace_path: Path,
         ranked_files: list[RankedFile],

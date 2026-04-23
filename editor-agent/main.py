@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Optional
 
@@ -50,11 +51,11 @@ def health() -> None:
 def analyze(workspace: str) -> None:
     """Analyze a project workspace."""
     orchestrator = _build_orchestrator()
-    response = orchestrator.run(
+    response = asyncio.run(orchestrator.run(
         mode=AgentMode.ANALYZE,
         workspace_path=_resolve_workspace(workspace),
         user_input=None,
-    )
+    ))
     render_response(console, response)
 
 
@@ -62,11 +63,11 @@ def analyze(workspace: str) -> None:
 def ask(workspace: str, question: str) -> None:
     """Ask a question about a project workspace."""
     orchestrator = _build_orchestrator()
-    response = orchestrator.run(
+    response = asyncio.run(orchestrator.run(
         mode=AgentMode.ASK,
         workspace_path=_resolve_workspace(workspace),
         user_input=question,
-    )
+    ))
     render_response(console, response)
 
 
@@ -74,11 +75,11 @@ def ask(workspace: str, question: str) -> None:
 def suggest(workspace: str, request: str) -> None:
     """Get safe suggestions for a project workspace."""
     orchestrator = _build_orchestrator()
-    response = orchestrator.run(
+    response = asyncio.run(orchestrator.run(
         mode=AgentMode.SUGGEST,
         workspace_path=_resolve_workspace(workspace),
         user_input=request,
-    )
+    ))
     render_response(console, response)
 
 
@@ -86,11 +87,11 @@ def suggest(workspace: str, request: str) -> None:
 def patch_preview(workspace: str, request: str) -> None:
     """Generate a patch proposal preview without modifying files."""
     orchestrator = _build_orchestrator()
-    response = orchestrator.run(
+    response = asyncio.run(orchestrator.run(
         mode=AgentMode.PATCH_PREVIEW,
         workspace_path=_resolve_workspace(workspace),
         user_input=request,
-    )
+    ))
     render_response(console, response)
 
 
@@ -98,12 +99,12 @@ def patch_preview(workspace: str, request: str) -> None:
 def apply(workspace: str, request: str, confirm: bool = typer.Option(False, "--confirm")) -> None:
     """Generate and optionally apply a proposed patch with backups and rollback."""
     orchestrator = _build_orchestrator()
-    response = orchestrator.run(
+    response = asyncio.run(orchestrator.run(
         mode=AgentMode.APPLY,
         workspace_path=_resolve_workspace(workspace),
         user_input=request,
         confirm=confirm,
-    )
+    ))
     render_response(console, response)
 
 
