@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 from agent_core.agent.orchestrator import AgentOrchestrator
 from agent_core.agent.response_parser import ResponseParser
@@ -32,6 +33,19 @@ class OpenAICompatibilityTests(unittest.TestCase):
         self.assertEqual(extract_request_workspace(request), "C:/repo/editor-agent")
         self.assertEqual(extract_request_mode(request), "ask")
         self.assertEqual(validate_openai_mode("review"), "review")
+
+    def test_extracts_workspace_from_extra_body_camel_case(self) -> None:
+        request = OpenAIChatCompletionRequest.model_validate(
+            {
+                "model": "laz-agent",
+                "messages": [{"role": "user", "content": "What does this project do?"}],
+                "extraBody": {
+                    "workspace": "C:/repo/editor-agent",
+                    "mode": "ask",
+                },
+            }
+        )
+        self.assertEqual(extract_request_workspace(request), "C:/repo/editor-agent")
 
     def test_extracts_last_user_message(self) -> None:
         request = OpenAIChatCompletionRequest(
@@ -154,6 +168,23 @@ class OpenAICompatibilityTests(unittest.TestCase):
         self.assertEqual(client._resolve_temperature("0.15"), 0.15)
         self.assertEqual(client._resolve_temperature("2.0"), 0.2)
         self.assertEqual(client._resolve_temperature("-1"), 0.0)
+
+    def test_trivial_ask_uses_local_fast_path(self) -> None:
+        settings = Settings.model_validate(
+            {
+                "NVIDIA_API_KEY": "test-key",
+                "NVIDIA_MODEL": "moonshotai/kimi-k2-instruct",
+            }
+        )
+        orchestrator = AgentOrchestrator(settings)
+        session = orchestrator._build_trivial_ask_response(
+            AgentMode.ASK,
+            Path("C:/repo/editor-agent"),
+            "selam",
+        )
+        self.assertIsNotNone(session)
+        self.assertEqual(session.parsed_response.summary, "Selam.")
+        self.assertEqual(session.parsed_response.parse_strategy, "local_fast_path")
 
 
 if __name__ == "__main__":

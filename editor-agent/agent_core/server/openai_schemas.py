@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 class OpenAIMessage(BaseModel):
@@ -19,7 +19,10 @@ class OpenAIChatCompletionRequest(BaseModel):
     temperature: float | None = None
     max_tokens: int | None = None
     stream: bool = False
-    extra_body: dict[str, Any] | None = None
+    extra_body: dict[str, Any] | None = Field(
+        default=None,
+        validation_alias=AliasChoices("extra_body", "extraBody"),
+    )
     metadata: dict[str, Any] | None = None
     workspace: str | None = None
     mode: str | None = None

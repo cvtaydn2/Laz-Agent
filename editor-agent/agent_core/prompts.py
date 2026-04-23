@@ -21,6 +21,16 @@ SYSTEM_PROMPT = dedent(
     """
 ).strip()
 
+ASK_SYSTEM_PROMPT = dedent(
+    """
+    You are a stable local coding assistant.
+    Answer briefly and directly.
+    Use the provided workspace context only when it is relevant.
+    Do not invent actions that were not run.
+    Use plain text.
+    """
+).strip()
+
 
 def build_prompt(
     mode: AgentMode,
@@ -69,7 +79,8 @@ def build_prompt(
         prompt_parts.append(f"DIFF:\n{diff_text}")
     prompt_parts.extend(context_blocks)
     user_prompt = "\n\n".join(prompt_parts)
-    return PromptBundle(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt)
+    system_prompt = ASK_SYSTEM_PROMPT if mode == AgentMode.ASK else SYSTEM_PROMPT
+    return PromptBundle(system_prompt=system_prompt, user_prompt=user_prompt)
 
 
 def _task_instruction(mode: AgentMode, user_input: str | None) -> str:
@@ -87,12 +98,8 @@ def _task_instruction(mode: AgentMode, user_input: str | None) -> str:
     if mode == AgentMode.ASK:
         return (
             "OUTPUT_HEADINGS:\n"
-            "SUMMARY:\n"
-            "FINDINGS:\n"
-            "SUGGESTIONS:\n"
-            "COMMANDS_TO_CONSIDER:\n"
-            "RISKS:\n\n"
-            f"TASK: Answer this workspace question using the provided files: {user_input}"
+            "SUMMARY:\n\n"
+            f"TASK: Answer this request briefly and directly: {user_input}"
         )
     if mode == AgentMode.SUGGEST:
         return (

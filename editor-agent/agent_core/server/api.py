@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from agent_core.config import ensure_environment_ready
 from agent_core.models import AgentMode
@@ -14,10 +15,12 @@ from agent_core.server.openai_adapter import (
     build_openai_fallback_response,
     build_openai_models_response,
     build_openai_response,
+    build_openai_streaming_chunks,
     extract_changed_files,
     extract_diff,
     extract_request_mode,
     extract_request_workspace,
+    session_to_plain_text,
     extract_user_message,
     validate_openai_mode,
 )
@@ -108,12 +111,6 @@ def list_models() -> OpenAIModelsResponse:
 @app.post("/v1/chat/completions")
 def chat_completions(request: OpenAIChatCompletionRequest):
     try:
-        if request.stream:
-            raise HTTPException(
-                status_code=400,
-                detail="stream=true is not supported by this server yet.",
-            )
-
         workspace = extract_request_workspace(request)
         if not workspace:
             raise HTTPException(
@@ -129,12 +126,6 @@ def chat_completions(request: OpenAIChatCompletionRequest):
                 detail="At least one non-empty user message is required.",
             )
 
-        print("DEBUG model:", request.model)
-        print("DEBUG extra_body:", request.extra_body)
-        print("DEBUG workspace:", workspace)
-        print("DEBUG mode raw:", mode_value)
-        print("DEBUG user_message:", user_message)
-
         session = run_agent(
             AgentMode(mode_value),
             workspace,
@@ -144,19 +135,68 @@ def chat_completions(request: OpenAIChatCompletionRequest):
             changed_files=extract_changed_files(request),
             diff_text=extract_diff(request),
         )
-        print("DEBUG agent final_message:", getattr(session, "final_message", None))
-        print("DEBUG agent summary:", getattr(session.parsed_response, "summary", None))
+        if request.stream:
+            content = session_to_plain_text(session)
+            created = int(datetime.now(timezone.utc).timestamp())
+            completion_id = f"chatcmpl-{session.session_id}"
+
+            async def event_stream():
+                for chunk in build_openai_streaming_chunks(
+                    model=request.model,
+                    content=content,
+                    completion_id=completion_id,
+                    created=created,
+                ):
+                    yield chunk
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
         return build_openai_response(session=session, requested_model=request.model)
     except HTTPException:
         raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except NvidiaInferenceError as exc:
+        if request.stream:
+            created = int(datetime.now(timezone.utc).timestamp())
+            async def error_event_stream():
+                for chunk in build_openai_streaming_chunks(
+                    model=request.model,
+                    content=exc.user_message,
+                    completion_id=f"chatcmpl-fallback-{created}",
+                    created=created,
+                ):
+                    yield chunk
+
+            return StreamingResponse(
+                error_event_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
         return build_openai_fallback_response(
             model=request.model,
             content=exc.user_message,
         )
     except Exception:
+        if request.stream:
+            created = int(datetime.now(timezone.utc).timestamp())
+            async def generic_error_stream():
+                for chunk in build_openai_streaming_chunks(
+                    model=request.model,
+                    content="The local agent could not complete the request. Please retry with a smaller request or a narrower workspace context.",
+                    completion_id=f"chatcmpl-fallback-{created}",
+                    created=created,
+                ):
+                    yield chunk
+
+            return StreamingResponse(
+                generic_error_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
         return build_openai_fallback_response(
             model=request.model,
             content="The local agent could not complete the request. Please retry with a smaller request or a narrower workspace context.",

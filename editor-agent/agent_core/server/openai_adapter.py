@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from agent_core.models import AgentMode, SessionRecord
+from agent_core.config import Settings
 from agent_core.server.openai_schemas import (
     OpenAIChatCompletionRequest,
     OpenAIChatCompletionResponse,
@@ -57,6 +58,9 @@ def extract_request_workspace(request: OpenAIChatCompletionRequest) -> str | Non
 
     if request.workspace and request.workspace.strip():
         return request.workspace.strip()
+    settings = Settings.load()
+    if settings.default_workspace.strip():
+        return settings.default_workspace.strip()
     return None
 
 
@@ -206,6 +210,47 @@ def build_openai_fallback_response(model: str, content: str) -> OpenAIChatComple
         ],
         usage=OpenAIUsage(),
     )
+
+
+def build_openai_streaming_chunks(
+    *,
+    model: str,
+    content: str,
+    completion_id: str,
+    created: int,
+) -> list[str]:
+    chunks = [
+        {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model or OPENAI_COMPATIBLE_MODEL_ID,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "content": content,
+                    },
+                    "finish_reason": None,
+                }
+            ],
+        },
+        {
+            "id": completion_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model or OPENAI_COMPATIBLE_MODEL_ID,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop",
+                }
+            ],
+        },
+    ]
+    return [f"data: {json.dumps(chunk, ensure_ascii=False)}\n\n" for chunk in chunks] + ["data: [DONE]\n\n"]
 
 
 def _append_section(target: list[str], title: str, items: list[str]) -> None:

@@ -135,12 +135,13 @@ Default backend configuration:
 
 - `NVIDIA_MODEL=moonshotai/kimi-k2-instruct`
 - `AGENT_TEMPERATURE=0.1`
-- `AGENT_TIMEOUT_SECONDS=12`
+- `AGENT_TIMEOUT_SECONDS=18`
 - `AGENT_MAX_FILE_BYTES=120000`
 - `AGENT_MAX_CHARS_PER_FILE=2500`
 - `AGENT_MAX_CONTEXT_CHARS=12000`
 - `AGENT_TOP_K_FILES=5`
 - `AGENT_MAX_COMPLETION_TOKENS=300`
+- `AGENT_DEFAULT_WORKSPACE=<server start directory by default>`
 
 These remain configurable via environment variables.
 
@@ -189,10 +190,10 @@ Example Continue-style request body:
 Rules:
 
 - non-streaming only
-- `workspace` is required
+- `workspace` is preferred
 - external model id stays `laz-agent`
 - internal NVIDIA backend model can be changed independently
-- `stream=true` is explicitly rejected
+- `stream=true` is supported with minimal OpenAI-style SSE
 
 Supported `extra_body` fields:
 
@@ -200,6 +201,15 @@ Supported `extra_body` fields:
 - `mode`
 - `changed_files`
 - `diff`
+
+Workspace resolution order:
+
+1. `extra_body.workspace`
+2. `extraBody.workspace`
+3. `metadata.workspace`
+4. top-level `workspace`
+5. `AGENT_DEFAULT_WORKSPACE`
+6. server process current working directory
 
 Allowed modes:
 
@@ -307,6 +317,7 @@ Current behavior:
 - capped backoff between retries
 - safe fallback response when the NVIDIA backend times out
 - general `ask` requests can skip workspace scanning when the prompt does not appear repo-aware
+- trivial greeting-style `ask` requests can return from a local fast-path without calling the backend model
 
 If inference times out, the response remains OpenAI-compatible and the assistant message contains:
 
@@ -326,7 +337,7 @@ If responses are slow:
 - `NVIDIA_BASE_URL`: defaults to `https://integrate.api.nvidia.com/v1`
 - `NVIDIA_MODEL`: defaults to `moonshotai/kimi-k2-instruct`
 - `AGENT_TEMPERATURE`: defaults to `0.1`
-- `AGENT_TIMEOUT_SECONDS`: defaults to `12`
+- `AGENT_TIMEOUT_SECONDS`: defaults to `18`
 - `AGENT_MAX_FILE_BYTES`: defaults to `120000`
 - `AGENT_MAX_CHARS_PER_FILE`: defaults to `2500`
 - `AGENT_MAX_CONTEXT_CHARS`: defaults to `12000`

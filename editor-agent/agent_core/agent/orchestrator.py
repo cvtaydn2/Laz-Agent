@@ -62,6 +62,17 @@ class AgentOrchestrator:
     ) -> SessionRecord:
         mode = self._normalize_mode(mode)
         self.logger.info("Starting run: mode=%s workspace=%s", mode.value, workspace_path)
+        trivial_response = self._build_trivial_ask_response(mode, workspace_path, user_input)
+        if trivial_response is not None:
+            self.session_writer.write(trivial_response)
+            self.logger.info(
+                "Completed run: mode=%s workspace=%s session=%s backend_model=%s files=0 context_chars=0 status=local_fast_path",
+                mode.value,
+                workspace_path,
+                trivial_response.session_id,
+                self.settings.nvidia_model,
+            )
+            return trivial_response
         use_workspace = self._should_use_workspace(
             mode=mode,
             user_input=user_input,
@@ -214,6 +225,51 @@ class AgentOrchestrator:
             normalized = mode.strip().lower().replace("-", "_")
             return AgentMode(normalized)
         raise ValueError("Mode must be an AgentMode or a valid mode string.")
+
+    def _build_trivial_ask_response(
+        self,
+        mode: AgentMode,
+        workspace_path: Path,
+        user_input: str | None,
+    ) -> SessionRecord | None:
+        if mode != AgentMode.ASK:
+            return None
+        normalized = (user_input or "").strip().lower()
+        trivial_responses = {
+            "selam": "Selam.",
+            "selam yaz": "Selam.",
+            "merhaba": "Merhaba.",
+            "merhaba yaz": "Merhaba.",
+            "hi": "Hi.",
+            "hello": "Hello.",
+            "hey": "Hey.",
+        }
+        response_text = trivial_responses.get(normalized)
+        if response_text is None:
+            return None
+
+        session_id = build_session_id(mode)
+        created_at = utc_now()
+        workspace_summary = self._build_empty_workspace_summary(workspace_path, None)
+        parsed = ParsedAnswer(
+            summary=response_text,
+            raw_text=response_text,
+            parse_strategy="local_fast_path",
+        )
+        return SessionRecord(
+            session_id=session_id,
+            created_at=created_at,
+            mode=mode,
+            workspace_path=str(workspace_path.resolve()),
+            prompt=user_input or "",
+            user_input=user_input,
+            workspace_summary=workspace_summary,
+            ranked_files=[],
+            selected_context=[],
+            raw_response=response_text,
+            parsed_response=parsed,
+            confirmed=False,
+        )
 
     def _should_use_workspace(
         self,
