@@ -11,6 +11,7 @@ from agent_core.config import Settings
 from agent_core.logger import configure_logger
 from agent_core.models import ChatMessage, ModelResponse
 from agent_core.llm.provider import LLMProvider
+from agent_core.server.metrics import LLM_LATENCY_SECONDS
 
 
 class NvidiaInferenceError(RuntimeError):
@@ -95,11 +96,13 @@ class NvidiaProvider(LLMProvider):
                         data = response.json()
                     
                     model_response = self._parse_response(data)
+                    elapsed = time.monotonic() - started_at
+                    LLM_LATENCY_SECONDS.labels(provider="nvidia", model=model_name).observe(elapsed)
                     self.logger.info(
                         "NVIDIA chat succeeded: model=%s attempt=%s elapsed_seconds=%.2f",
                         model_name,
                         attempt,
-                        time.monotonic() - started_at,
+                        elapsed,
                     )
                     return model_response
                 except httpx.HTTPStatusError as exc:
@@ -142,6 +145,7 @@ class NvidiaProvider(LLMProvider):
         }
 
         self.logger.info("NVIDIA stream starting: model=%s", model_name)
+        started_at = time.monotonic()
 
         async with httpx.AsyncClient(
             base_url=str(self.settings.nvidia_base_url),
@@ -166,6 +170,7 @@ class NvidiaProvider(LLMProvider):
                             yield content
                     except (json.JSONDecodeError, KeyError, IndexError):
                         continue
+                LLM_LATENCY_SECONDS.labels(provider="nvidia", model=model_name).observe(time.monotonic() - started_at)
 
     def _parse_response(self, data: dict) -> ModelResponse:
         choices = data.get("choices", [])

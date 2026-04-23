@@ -119,7 +119,7 @@ class ResponseParser:
             first_lines = content.splitlines()[:3]
             for line in first_lines:
                 # Matches: # File: path/to/file or // File: path/to/file or Path: path/to/file
-                path_match = re.search(r"(?:#|//|Path:)\s*(?:File:)?\s*([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9]{1,5})", line, re.IGNORECASE)
+                path_match = re.search(r"(?:<!--|#|//|Path:)\s*(?:File:)?\s*([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9]{1,5})", line, re.IGNORECASE)
                 if path_match:
                     path_hint = path_match.group(1).strip()
                     break

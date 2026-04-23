@@ -11,6 +11,7 @@ from agent_core.agent.planner import AgentPlanner
 from agent_core.agent.response_parser import ResponseParser
 from agent_core.agent.suggester import SuggestionPolicy
 from agent_core.config import Settings
+from agent_core.llm import get_llm_provider
 from agent_core.logger import configure_logger
 from agent_core.models import (
     ApplyLogRecord,
@@ -195,7 +196,7 @@ class AgentOrchestrator:
                 request=user_input,
                 parsed=parsed,
             )
-            patch_proposal_path = str(self.patch_writer.write(patch_proposal))
+            patch_proposal_path = str(await self.patch_writer.write(patch_proposal))
         if mode == AgentMode.APPLY and confirm:
             apply_log = self.apply_engine.apply(
                 workspace_path=workspace_path,
@@ -204,7 +205,7 @@ class AgentOrchestrator:
                 request=user_input,
                 operations=parsed.file_operations,
             )
-            apply_log_path = str(self.apply_log_writer.write(apply_log))
+            apply_log_path = str(await self.apply_log_writer.write(apply_log))
 
         session = SessionRecord(
             session_id=session_id,
@@ -222,7 +223,7 @@ class AgentOrchestrator:
             apply_log_path=apply_log_path,
             confirmed=confirm,
         )
-        self.session_writer.write(session)
+        await self.session_writer.write(session)
         self.logger.info(
             "Completed run: mode=%s workspace=%s session=%s backend_model=%s files=%s context_chars=%s status=success",
             mode.value,

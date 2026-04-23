@@ -14,7 +14,7 @@ class ApplyModePolicy:
             normalized_action = operation.action.strip().lower()
             if not normalized_path:
                 continue
-            if normalized_action not in {"update"}:
+            if normalized_action not in {"update", "create", "delete"}:
                 continue
             if normalized_path in seen_paths:
                 continue
@@ -22,7 +22,7 @@ class ApplyModePolicy:
             allowed_operations.append(
                 ProposedFileOperation(
                     path=normalized_path,
-                    action="update",
+                    action=normalized_action,
                     content=operation.content,
                 )
             )
@@ -32,7 +32,7 @@ class ApplyModePolicy:
 
         if not updated.proposed_changes and allowed_operations:
             updated.proposed_changes = [
-                f"{item.path}: update this file with the proposed content."
+                f"{item.path}: {item.action} this file with the proposed content."
                 for item in allowed_operations
             ]
 

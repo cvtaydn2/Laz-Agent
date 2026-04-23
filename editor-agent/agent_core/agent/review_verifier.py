@@ -19,6 +19,18 @@ class ReviewVerifier:
         verified = parsed.model_copy(deep=True)
         context_map = {item.relative_path.replace("\\", "/"): item.content for item in selected_context}
         findings: list[ReviewFinding] = []
+        
+        # Check if affected files exist
+        for file_path in verified.affected_files:
+            if not (workspace_path / file_path).exists():
+                findings.append(ReviewFinding(
+                    title="Missing File",
+                    file=file_path,
+                    evidence="N/A",
+                    line=0,
+                    severity="high",
+                    description=f"The proposed file {file_path} does not exist in the workspace and cannot be verified."
+                ))
 
         for finding in verified.review_findings:
             normalized_path = finding.file.replace("\\", "/").strip()

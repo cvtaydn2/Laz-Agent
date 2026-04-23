@@ -8,6 +8,7 @@ from pathlib import Path
 from agent_core.config import Settings
 from agent_core.models import FileScanResult, WorkspaceSummary
 from agent_core.workspace.filters import is_allowed_file, is_ignored_directory
+from agent_core.server.metrics import WORKSPACE_SCAN_DURATION_SECONDS
 import time
 
 # Global in-memory cache for scan results to provide near-instant consecutive requests
@@ -28,7 +29,9 @@ class WorkspaceScanner:
             if now - timestamp < _SCAN_TTL:
                 return results, summary
                 
+        scan_start = time.monotonic()
         results, summary = await asyncio.to_thread(self._sync_scan, workspace_path)
+        WORKSPACE_SCAN_DURATION_SECONDS.observe(time.monotonic() - scan_start)
         _SCAN_CACHE[ws_key] = (now, results, summary)
         return results, summary
 

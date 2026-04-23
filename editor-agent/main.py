@@ -30,7 +30,7 @@ def _build_orchestrator() -> AgentOrchestrator:
     return AgentOrchestrator(settings=settings)
 
 
-@app.command()
+@app.command(help="Validate local configuration and endpoint readiness.")
 def health() -> None:
     """Validate local configuration and endpoint readiness."""
     settings = Settings.load()
@@ -47,8 +47,10 @@ def health() -> None:
         raise typer.Exit(code=1)
 
 
-@app.command()
-def analyze(workspace: str) -> None:
+@app.command(help="Analyze a project workspace and provide an overview of the architecture and potential issues.")
+def analyze(
+    workspace: str = typer.Argument(..., help="Path to the workspace directory to scan.")
+) -> None:
     """Analyze a project workspace."""
     orchestrator = _build_orchestrator()
     response = asyncio.run(orchestrator.run(
@@ -59,8 +61,11 @@ def analyze(workspace: str) -> None:
     render_response(console, response)
 
 
-@app.command()
-def ask(workspace: str, question: str) -> None:
+@app.command(help="Ask a natural language question about the project workspace using the LLM's context.")
+def ask(
+    workspace: str = typer.Argument(..., help="Path to the workspace directory."),
+    question: str = typer.Argument(..., help="The natural language question to ask.")
+) -> None:
     """Ask a question about a project workspace."""
     orchestrator = _build_orchestrator()
     response = asyncio.run(orchestrator.run(
@@ -71,8 +76,11 @@ def ask(workspace: str, question: str) -> None:
     render_response(console, response)
 
 
-@app.command()
-def suggest(workspace: str, request: str) -> None:
+@app.command(help="Get safe suggestions for improvements or refactors for a project workspace.")
+def suggest(
+    workspace: str = typer.Argument(..., help="Path to the workspace directory."),
+    request: str = typer.Argument(..., help="The specific request for suggestions.")
+) -> None:
     """Get safe suggestions for a project workspace."""
     orchestrator = _build_orchestrator()
     response = asyncio.run(orchestrator.run(
@@ -83,8 +91,11 @@ def suggest(workspace: str, request: str) -> None:
     render_response(console, response)
 
 
-@app.command("patch-preview")
-def patch_preview(workspace: str, request: str) -> None:
+@app.command("patch-preview", help="Generate a patch proposal preview (dry-run) without modifying any files.")
+def patch_preview(
+    workspace: str = typer.Argument(..., help="Path to the workspace directory."),
+    request: str = typer.Argument(..., help="The code change request to preview.")
+) -> None:
     """Generate a patch proposal preview without modifying files."""
     orchestrator = _build_orchestrator()
     response = asyncio.run(orchestrator.run(
@@ -95,8 +106,12 @@ def patch_preview(workspace: str, request: str) -> None:
     render_response(console, response)
 
 
-@app.command()
-def apply(workspace: str, request: str, confirm: bool = typer.Option(False, "--confirm")) -> None:
+@app.command(help="Generate and optionally apply a proposed patch with automated backups and rollback safety.")
+def apply(
+    workspace: str = typer.Argument(..., help="Path to the workspace directory."),
+    request: str = typer.Argument(..., help="The specific code change request."),
+    confirm: bool = typer.Option(False, "--confirm", help="Automatically apply changes without manual confirmation.")
+) -> None:
     """Generate and optionally apply a proposed patch with backups and rollback."""
     orchestrator = _build_orchestrator()
     response = asyncio.run(orchestrator.run(

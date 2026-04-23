@@ -25,6 +25,9 @@ from agent_core.server.openai_adapter import (
     validate_openai_mode,
     extract_preferred_files,
 )
+from agent_core.server.metrics import HTTP_REQUESTS_TOTAL
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
+from fastapi import Response
 from agent_core.server.openai_schemas import OpenAIChatCompletionRequest, OpenAIModelsResponse
 from agent_core.server.schemas import (
     AskRequest,
@@ -52,6 +55,25 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="Editor Agent API", version="0.1.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def track_metrics_middleware(request: Request, call_next):
+    method = request.method
+    endpoint = request.url.path
+    response = await call_next(request)
+    status = response.status_code
+    
+    # Exclude /metrics from tracking to avoid noise
+    if endpoint != "/metrics":
+        HTTP_REQUESTS_TOTAL.labels(method=method, endpoint=endpoint, status=status).inc()
+        
+    return response
+
+
+@app.get("/metrics")
+async def metrics():
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 @app.exception_handler(RequestValidationError)
