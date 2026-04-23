@@ -4,7 +4,7 @@ from agent_core.models import ParsedAnswer, PatchProposal
 
 
 def patch_support_status() -> str:
-    return "Patch preview generation is available. Patch apply mode is still disabled."
+    return "Patch preview generation is available. Confirmed safe apply mode is available for existing files."
 
 
 def build_patch_proposal(
@@ -24,4 +24,5 @@ def build_patch_proposal(
         affected_files=parsed.affected_files,
         proposed_changes=parsed.proposed_changes,
         next_steps=parsed.next_steps,
+        file_operations=parsed.file_operations,
     )

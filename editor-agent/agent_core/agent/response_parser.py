@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from agent_core.models import ParsedAnswer
+import re
+
+from agent_core.models import ParsedAnswer, ProposedFileOperation
 
 
 class ResponseParser:
@@ -42,4 +44,24 @@ class ResponseParser:
             affected_files=sections["affected_files"],
             proposed_changes=sections["proposed_changes"],
             next_steps=sections["next_steps"],
+            file_operations=self._parse_file_operations(text),
         )
+
+    def _parse_file_operations(self, text: str) -> list[ProposedFileOperation]:
+        pattern = re.compile(
+            r"BEGIN_FILE\s+PATH:\s*(?P<path>[^\r\n]+)\s+ACTION:\s*(?P<action>[^\r\n]+)\s+CONTENT:\s*(?P<content>.*?)\s+END_FILE",
+            re.DOTALL,
+        )
+        operations: list[ProposedFileOperation] = []
+        for match in pattern.finditer(text):
+            path = match.group("path").strip().strip("`")
+            action = match.group("action").strip().lower()
+            content = match.group("content")
+            operations.append(
+                ProposedFileOperation(
+                    path=path,
+                    action=action,
+                    content=content.rstrip("\r\n"),
+                )
+            )
+        return operations

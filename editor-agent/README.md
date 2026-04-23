@@ -2,7 +2,7 @@
 
 `editor-agent` is a reusable, local, CLI-first coding agent backend that uses NVIDIA's OpenAI-compatible API with the free model endpoint `minimaxai/minimax-m2.7`.
 
-This project currently includes Phase 1 and Phase 2 safe capabilities:
+This project currently includes Phase 1, Phase 2, and Phase 3 safe capabilities:
 
 - no automatic file editing
 - patch preview only, with no automatic patch apply
@@ -10,6 +10,9 @@ This project currently includes Phase 1 and Phase 2 safe capabilities:
 - no destructive operations
 - session outputs are saved locally under `state/sessions`
 - patch proposals are saved locally under `state/patches`
+- apply mode requires an explicit `--confirm` flag
+- backups are created under `state/backups` before each file write
+- failed apply runs rollback written files from backup
 
 ## Features
 
@@ -18,6 +21,7 @@ This project currently includes Phase 1 and Phase 2 safe capabilities:
 - `ask` asks a question about a workspace
 - `suggest` asks for safe, non-executing suggestions to move a project forward
 - `patch-preview` generates file-by-file proposed changes without modifying files
+- `apply` can write explicitly proposed file changes only when `--confirm` is provided
 - safe file scanning with ignore rules and extension allowlist
 - UTF-8-safe file reads with binary detection
 - relevant file ranking based on the task and project signals
@@ -47,12 +51,15 @@ editor-agent/
       ranker.py
     agent/
       __init__.py
+      apply_mode.py
       orchestrator.py
+      patch_preview.py
       planner.py
       suggester.py
       response_parser.py
     tools/
       __init__.py
+      apply_tools.py
       file_tools.py
       patch_tools.py
       command_tools.py
@@ -118,6 +125,20 @@ python .\main.py suggest . "Find what is missing to run this project"
 python .\main.py patch-preview . "Add missing environment setup docs"
 ```
 
+### Generate and apply an approved patch
+
+Preview only, no file writes:
+
+```powershell
+python .\main.py apply . "Implement the approved patch"
+```
+
+Apply with explicit confirmation:
+
+```powershell
+python .\main.py apply . "Implement the approved patch" --confirm
+```
+
 ## Configuration
 
 The app reads environment variables from `.env` when available.
@@ -138,13 +159,19 @@ The app reads environment variables from `.env` when available.
 - The agent does not execute shell commands.
 - The agent only suggests commands in text form.
 - Patch previews are proposals only and are never applied automatically.
+- Apply mode writes files only when `--confirm` is present.
+- Apply mode never deletes files or directories automatically.
+- Apply mode creates backups before each file write and rolls back on failure.
+- In this safe version, confirmed apply only updates existing files. New-file creation stays in preview mode until a later phase.
 - Large files, binary files, ignored directories, and disallowed extensions are skipped.
 
 ## Session Output
 
-Each `analyze`, `ask`, `suggest`, and `patch-preview` run saves a JSON session file under `state/sessions/`.
+Each `analyze`, `ask`, `suggest`, `patch-preview`, and `apply` run saves a JSON session file under `state/sessions/`.
 
-Each `patch-preview` run also saves a dedicated patch proposal JSON file under `state/patches/`.
+Each `patch-preview` and `apply` run also saves a dedicated patch proposal JSON file under `state/patches/`.
+
+Confirmed `apply` runs also save an apply log JSON file under `state/logs/`.
 
 The saved data includes:
 
@@ -166,7 +193,17 @@ Patch proposal files include:
 - next_steps
 - source session id
 
+Apply log files include:
+
+- session id
+- workspace path
+- whether confirmation was provided
+- files written
+- backup locations
+- rollback status
+- timestamps
+
 ## Notes
 
 - Health checks do not make a paid-provider call. They only validate local configuration and endpoint setup inputs.
-- If you want to test a live model response, use `analyze`, `ask`, or `suggest` after setting `NVIDIA_API_KEY`.
+- If you want to test a live model response, use `analyze`, `ask`, `suggest`, `patch-preview`, or `apply` after setting `NVIDIA_API_KEY`.

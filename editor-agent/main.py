@@ -94,6 +94,19 @@ def patch_preview(workspace: str, request: str) -> None:
     render_response(console, response)
 
 
+@app.command()
+def apply(workspace: str, request: str, confirm: bool = typer.Option(False, "--confirm")) -> None:
+    """Generate and optionally apply a proposed patch with backups and rollback."""
+    orchestrator = _build_orchestrator()
+    response = orchestrator.run(
+        mode=AgentMode.APPLY,
+        workspace_path=_resolve_workspace(workspace),
+        user_input=request,
+        confirm=confirm,
+    )
+    render_response(console, response)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     app(args=argv)
     return 0

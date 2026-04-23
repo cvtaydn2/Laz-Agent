@@ -52,10 +52,17 @@ def render_response(console: Console, session: SessionRecord) -> None:
     _render_list(console, "Affected Files", parsed.affected_files)
     _render_list(console, "Proposed Changes", parsed.proposed_changes)
     _render_list(console, "Next Steps", parsed.next_steps)
+    if parsed.file_operations:
+        operation_lines = [f"- {item.action}: {item.path}" for item in parsed.file_operations]
+        console.print(Panel("\n".join(operation_lines), title="File Operations"))
 
     console.print(f"Session saved to state/sessions/{session.session_id}.json")
     if session.patch_proposal_path:
         console.print(f"Patch proposal saved to {session.patch_proposal_path}")
+    if session.mode.value == "apply" and not session.confirmed:
+        console.print("Apply confirmation not provided. No files were changed.")
+    if session.apply_log_path:
+        console.print(f"Apply log saved to {session.apply_log_path}")
 
 
 def _render_list(console: Console, title: str, items: list[str]) -> None:

@@ -13,6 +13,7 @@ class AgentMode(str, Enum):
     ASK = "ask"
     SUGGEST = "suggest"
     PATCH_PREVIEW = "patch_preview"
+    APPLY = "apply"
 
 
 class FileScanResult(BaseModel):
@@ -59,6 +60,13 @@ class ParsedAnswer(BaseModel):
     affected_files: list[str] = Field(default_factory=list)
     proposed_changes: list[str] = Field(default_factory=list)
     next_steps: list[str] = Field(default_factory=list)
+    file_operations: list["ProposedFileOperation"] = Field(default_factory=list)
+
+
+class ProposedFileOperation(BaseModel):
+    path: str
+    action: str
+    content: str
 
 
 class PatchProposal(BaseModel):
@@ -71,6 +79,26 @@ class PatchProposal(BaseModel):
     affected_files: list[str] = Field(default_factory=list)
     proposed_changes: list[str] = Field(default_factory=list)
     next_steps: list[str] = Field(default_factory=list)
+    file_operations: list[ProposedFileOperation] = Field(default_factory=list)
+
+
+class AppliedFileRecord(BaseModel):
+    path: str
+    action: str
+    backup_path: str
+    existed_before: bool
+
+
+class ApplyLogRecord(BaseModel):
+    session_id: str
+    created_at: datetime
+    workspace_path: str
+    confirmed: bool
+    success: bool
+    rollback_performed: bool = False
+    request: str | None = None
+    files_written: list[AppliedFileRecord] = Field(default_factory=list)
+    error: str | None = None
 
 
 class SessionRecord(BaseModel):
@@ -86,6 +114,8 @@ class SessionRecord(BaseModel):
     raw_response: str
     parsed_response: ParsedAnswer
     patch_proposal_path: str | None = None
+    apply_log_path: str | None = None
+    confirmed: bool = False
 
 
 class HealthStatus(BaseModel):

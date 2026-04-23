@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_core.agent.apply_mode import ApplyModePolicy
 from agent_core.agent.patch_preview import PatchPreviewPolicy
 from agent_core.agent.planner import AgentPlanner
 from agent_core.agent.response_parser import ResponseParser
@@ -9,6 +10,7 @@ from agent_core.agent.suggester import SuggestionPolicy
 from agent_core.config import Settings
 from agent_core.logger import configure_logger
 from agent_core.models import (
+    ApplyLogRecord,
     AgentMode,
     ChatMessage,
     PatchProposal,
@@ -17,8 +19,9 @@ from agent_core.models import (
     utc_now,
 )
 from agent_core.nvidia_client import NvidiaClient
-from agent_core.output.writers import PatchProposalWriter, SessionWriter
+from agent_core.output.writers import ApplyLogWriter, PatchProposalWriter, SessionWriter
 from agent_core.prompts import build_prompt
+from agent_core.tools.apply_tools import ApplyEngine
 from agent_core.tools.patch_tools import build_patch_proposal
 from agent_core.workspace.ranker import WorkspaceRanker
 from agent_core.workspace.reader import WorkspaceReader
@@ -36,8 +39,11 @@ class AgentOrchestrator:
         self.response_parser = ResponseParser()
         self.suggestion_policy = SuggestionPolicy()
         self.patch_preview_policy = PatchPreviewPolicy()
+        self.apply_policy = ApplyModePolicy()
         self.session_writer = SessionWriter(settings)
         self.patch_writer = PatchProposalWriter(settings)
+        self.apply_log_writer = ApplyLogWriter(settings)
+        self.apply_engine = ApplyEngine(settings)
         self.logger = configure_logger(settings.logs_dir / "editor-agent.log")
 
     def run(
@@ -45,6 +51,7 @@ class AgentOrchestrator:
         mode: AgentMode,
         workspace_path: Path,
         user_input: str | None,
+        confirm: bool = False,
     ) -> SessionRecord:
         self.logger.info("Starting run: mode=%s workspace=%s", mode.value, workspace_path)
 
@@ -67,10 +74,14 @@ class AgentOrchestrator:
             parsed = self.suggestion_policy.apply(parsed)
         if mode == AgentMode.PATCH_PREVIEW:
             parsed = self.patch_preview_policy.apply(parsed)
+        if mode == AgentMode.APPLY:
+            parsed = self.apply_policy.apply(parsed)
 
         patch_proposal: PatchProposal | None = None
         patch_proposal_path: str | None = None
-        if mode == AgentMode.PATCH_PREVIEW:
+        apply_log: ApplyLogRecord | None = None
+        apply_log_path: str | None = None
+        if mode in {AgentMode.PATCH_PREVIEW, AgentMode.APPLY}:
             patch_proposal = build_patch_proposal(
                 session_id=session_id,
                 created_at=created_at,
@@ -79,6 +90,15 @@ class AgentOrchestrator:
                 parsed=parsed,
             )
             patch_proposal_path = str(self.patch_writer.write(patch_proposal))
+        if mode == AgentMode.APPLY and confirm:
+            apply_log = self.apply_engine.apply(
+                workspace_path=workspace_path,
+                session_id=session_id,
+                created_at=created_at,
+                request=user_input,
+                operations=parsed.file_operations,
+            )
+            apply_log_path = str(self.apply_log_writer.write(apply_log))
 
         session = SessionRecord(
             session_id=session_id,
@@ -93,6 +113,8 @@ class AgentOrchestrator:
             raw_response=model_response.content,
             parsed_response=parsed,
             patch_proposal_path=patch_proposal_path,
+            apply_log_path=apply_log_path,
+            confirmed=confirm,
         )
         self.session_writer.write(session)
         self.logger.info(
