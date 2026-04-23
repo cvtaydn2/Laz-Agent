@@ -8,6 +8,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from agent_core.models import AgentMode, ParsedAnswer, SessionRecord, WorkspaceSummary
+from agent_core.nvidia_client import NvidiaTimeoutError
 from agent_core.server.api import app
 
 
@@ -88,6 +89,26 @@ class OpenAIAPITests(unittest.TestCase):
         self.assertEqual(payload["object"], "chat.completion")
         self.assertEqual(payload["choices"][0]["message"]["role"], "assistant")
         self.assertIn("summary", payload["choices"][0]["message"]["content"])
+
+    def test_backend_timeout_returns_valid_openai_shape(self) -> None:
+        with patch("agent_core.server.api.run_agent", side_effect=NvidiaTimeoutError()):
+            response = self.client.post(
+                "/v1/chat/completions",
+                json={
+                    "model": "laz-agent",
+                    "messages": [{"role": "user", "content": "What does this project do?"}],
+                    "extra_body": {
+                        "workspace": "C:/repo/editor-agent",
+                        "mode": "ask",
+                    },
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["object"], "chat.completion")
+        self.assertEqual(payload["choices"][0]["message"]["role"], "assistant")
+        self.assertIn("timed out", payload["choices"][0]["message"]["content"].lower())
 
 
 if __name__ == "__main__":

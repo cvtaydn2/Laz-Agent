@@ -68,6 +68,43 @@ class EnvironmentLoadingTests(unittest.TestCase):
         self.assertEqual(dotenv_path, "")
         self.assertEqual(settings.nvidia_api_key, "system-key")
 
+    def test_default_model_is_kimi(self) -> None:
+        test_dir = self.temp_root / "default-model"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        env_path = test_dir / ".env"
+        env_path.write_text("NVIDIA_API_KEY=nvapi-test-key\n", encoding="utf-8")
+
+        with patch.dict(os.environ, {}, clear=True):
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(test_dir)
+                with patch("agent_core.config.find_dotenv", return_value=str(env_path)):
+                    settings = Settings.load()
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(settings.nvidia_model, "moonshotai/kimi-k2-instruct")
+
+    def test_model_override_still_works(self) -> None:
+        test_dir = self.temp_root / "override-model"
+        test_dir.mkdir(parents=True, exist_ok=True)
+        env_path = test_dir / ".env"
+        env_path.write_text(
+            "NVIDIA_API_KEY=nvapi-test-key\nNVIDIA_MODEL=custom/provider-model\n",
+            encoding="utf-8",
+        )
+
+        with patch.dict(os.environ, {}, clear=True):
+            previous_cwd = Path.cwd()
+            try:
+                os.chdir(test_dir)
+                with patch("agent_core.config.find_dotenv", return_value=str(env_path)):
+                    settings = Settings.load()
+            finally:
+                os.chdir(previous_cwd)
+
+        self.assertEqual(settings.nvidia_model, "custom/provider-model")
+
 
 if __name__ == "__main__":
     unittest.main()

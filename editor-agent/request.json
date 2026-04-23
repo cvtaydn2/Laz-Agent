@@ -1,0 +1,15 @@
+{
+  "extra_body": {
+    "workspace": "C:/Users/Cevat/Documents/Github/Laz-Agent/editor-agent",
+    "mode": "ask"
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": "Sadece selam yaz."
+    }
+  ],
+  "model": "laz-agent",
+  "temperature": 0.1,
+  "max_tokens": 50
+}

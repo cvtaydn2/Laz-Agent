@@ -156,6 +156,7 @@ class ChatMessage(BaseModel):
 class ModelResponse(BaseModel):
     content: str
     usage: dict[str, Any] = Field(default_factory=dict)
+    status: str = "ok"
 
 
 def utc_now() -> datetime:

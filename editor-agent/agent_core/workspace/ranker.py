@@ -96,9 +96,13 @@ class WorkspaceRanker:
             )
 
         ranked.sort(key=lambda item: (-item.score, item.relative_path))
-        return self._ensure_required_files(ranked)
+        return self._ensure_required_files(ranked, normalized_preferred)
 
-    def _ensure_required_files(self, ranked: list[RankedFile]) -> list[RankedFile]:
+    def _ensure_required_files(
+        self,
+        ranked: list[RankedFile],
+        preferred_files: set[str],
+    ) -> list[RankedFile]:
         required_patterns = (
             "readme",
             "pyproject.toml",
@@ -114,7 +118,17 @@ class WorkspaceRanker:
         seen: set[str] = set()
 
         for item in ranked:
+            normalized_path = item.relative_path.replace("\\", "/").lower()
+            if normalized_path in preferred_files:
+                selected.append(item)
+                seen.add(item.relative_path)
+            if len(selected) >= self.settings.top_k_files:
+                return selected[: self.settings.top_k_files]
+
+        for item in ranked:
             name = Path(item.relative_path).name.lower()
+            if item.relative_path in seen:
+                continue
             if any(pattern == name or pattern in name for pattern in required_patterns):
                 selected.append(item)
                 seen.add(item.relative_path)

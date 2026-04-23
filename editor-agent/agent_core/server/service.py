@@ -8,6 +8,7 @@ from agent_core.agent.orchestrator import AgentOrchestrator
 from agent_core.config import Settings
 from agent_core.logger import configure_logger
 from agent_core.models import AgentMode, HealthStatus, ParsedAnswer, SessionRecord, WorkspaceSummary, build_session_id, utc_now
+from agent_core.nvidia_client import NvidiaBackendError, NvidiaTimeoutError
 
 
 def resolve_workspace_or_400(workspace: str) -> Path:
@@ -27,6 +28,47 @@ def build_orchestrator() -> AgentOrchestrator:
 def build_server_logger():
     settings = Settings.load()
     return configure_logger(settings.logs_dir / "editor-agent.log")
+
+
+def build_safe_fallback_session(
+    *,
+    mode: AgentMode,
+    workspace_path: Path,
+    user_input: str | None,
+    message: str,
+    note: str,
+) -> SessionRecord:
+    return SessionRecord(
+        session_id=build_session_id(mode),
+        created_at=utc_now(),
+        mode=mode,
+        workspace_path=str(workspace_path),
+        prompt=user_input or "",
+        user_input=user_input,
+        workspace_summary=WorkspaceSummary(
+            root_path=str(workspace_path),
+            total_files_scanned=0,
+            included_files=0,
+            skipped_files=0,
+            top_extensions={},
+            sampled_files=[],
+            notes=[note],
+        ),
+        ranked_files=[],
+        selected_context=[],
+        raw_response=message,
+        parsed_response=ParsedAnswer(
+            summary=message,
+            raw_text=message,
+            parse_strategy="raw_text",
+            risks_text=note if mode == AgentMode.REVIEW else "",
+            next_steps_text=(
+                "Retry with a smaller diff, fewer changed files, or a narrower workspace context."
+                if mode == AgentMode.REVIEW
+                else ""
+            ),
+        ),
+    )
 
 
 def build_health_status() -> HealthStatus:
@@ -63,33 +105,41 @@ def run_agent(
             changed_files=changed_files,
             diff_text=diff_text,
         )
+    except NvidiaTimeoutError as exc:
+        logger.warning(
+            "Backend timeout while running agent mode=%s workspace=%s",
+            mode.value,
+            workspace,
+        )
+        return build_safe_fallback_session(
+            mode=mode,
+            workspace_path=workspace_path,
+            user_input=user_input,
+            message=exc.user_message,
+            note="Backend inference timed out.",
+        )
+    except NvidiaBackendError as exc:
+        logger.warning(
+            "Backend inference error while running agent mode=%s workspace=%s",
+            mode.value,
+            workspace,
+        )
+        return build_safe_fallback_session(
+            mode=mode,
+            workspace_path=workspace_path,
+            user_input=user_input,
+            message=exc.user_message,
+            note="Backend inference failed.",
+        )
     except ValueError as exc:
         logger.exception("Validation error while running agent mode=%s workspace=%s", mode.value, workspace)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Unhandled server error while running agent mode=%s workspace=%s", mode.value, workspace)
-        return SessionRecord(
-            session_id=build_session_id(mode),
-            created_at=utc_now(),
+        return build_safe_fallback_session(
             mode=mode,
-            workspace_path=str(workspace_path),
-            prompt=user_input or "",
+            workspace_path=workspace_path,
             user_input=user_input,
-            workspace_summary=WorkspaceSummary(
-                root_path=str(workspace_path),
-                total_files_scanned=0,
-                included_files=0,
-                skipped_files=0,
-                top_extensions={},
-                sampled_files=[],
-                notes=["Internal error fallback response generated."],
-            ),
-            ranked_files=[],
-            selected_context=[],
-            raw_response=f"Internal processing error: {exc}",
-            parsed_response=ParsedAnswer(
-                summary=f"Internal processing error: {exc}",
-                raw_text=f"Internal processing error: {exc}",
-                parse_strategy="raw_text",
-            ),
+            message="The local agent hit an internal processing error before it could return a stable result. Please retry with a smaller request or a narrower workspace context.",
+            note="Internal error fallback response generated.",
         )

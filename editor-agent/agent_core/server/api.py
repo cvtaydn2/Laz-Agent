@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from agent_core.config import ensure_environment_ready
 from agent_core.models import AgentMode
+from agent_core.nvidia_client import NvidiaInferenceError
 from agent_core.server.openai_adapter import (
     build_openai_error,
     build_openai_fallback_response,
@@ -142,8 +143,13 @@ def chat_completions(request: OpenAIChatCompletionRequest):
         raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:
+    except NvidiaInferenceError as exc:
         return build_openai_fallback_response(
             model=request.model,
-            content=f"Internal fallback response: {exc}",
+            content=exc.user_message,
+        )
+    except Exception:
+        return build_openai_fallback_response(
+            model=request.model,
+            content="The local agent could not complete the request. Please retry with a smaller request or a narrower workspace context.",
         )

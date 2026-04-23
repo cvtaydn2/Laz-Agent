@@ -20,7 +20,7 @@ from agent_core.models import (
     build_session_id,
     utc_now,
 )
-from agent_core.nvidia_client import NvidiaClient
+from agent_core.nvidia_client import NvidiaBackendError, NvidiaClient, NvidiaTimeoutError
 from agent_core.output.writers import ApplyLogWriter, PatchProposalWriter, SessionWriter
 from agent_core.prompts import build_prompt
 from agent_core.tools.apply_tools import ApplyEngine
@@ -73,6 +73,16 @@ class AgentOrchestrator:
         selected_context, reader_notes = self.reader.read_ranked_files(workspace_path, ranked_files)
         workspace_summary.notes.extend(reader_notes)
         workspace_summary.preferred_files = changed_files or []
+        context_char_count = sum(len(item.content) for item in selected_context)
+        self.logger.info(
+            "Workspace context selected: workspace=%s mode=%s backend_model=%s files=%s context_chars=%s preferred_files=%s",
+            workspace_path,
+            mode.value,
+            self.settings.nvidia_model,
+            len(selected_context),
+            context_char_count,
+            len(changed_files or []),
+        )
 
         prompt_bundle = build_prompt(
             mode,
@@ -86,11 +96,20 @@ class AgentOrchestrator:
             ChatMessage(role="system", content=prompt_bundle.system_prompt),
             ChatMessage(role="user", content=prompt_bundle.user_prompt),
         ]
-        model_response = self.client.chat(
-            messages,
-            temperature_override=temperature_override,
-            max_tokens_override=max_tokens_override,
-        )
+        try:
+            model_response = self.client.chat(
+                messages,
+                temperature_override=temperature_override,
+                max_tokens_override=max_tokens_override,
+            )
+        except (NvidiaTimeoutError, NvidiaBackendError):
+            self.logger.exception(
+                "Backend inference failed: workspace=%s mode=%s backend_model=%s",
+                workspace_path,
+                mode.value,
+                self.settings.nvidia_model,
+            )
+            raise
         try:
             parsed = self.response_parser.parse(model_response.content)
         except Exception:
@@ -157,9 +176,12 @@ class AgentOrchestrator:
         )
         self.session_writer.write(session)
         self.logger.info(
-            "Completed run: mode=%s workspace=%s session=%s",
+            "Completed run: mode=%s workspace=%s session=%s backend_model=%s files=%s context_chars=%s status=success",
             mode.value,
             workspace_path,
             session.session_id,
+            self.settings.nvidia_model,
+            len(selected_context),
+            context_char_count,
         )
         return session

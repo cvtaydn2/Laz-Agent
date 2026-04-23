@@ -1,33 +1,34 @@
 # Editor Agent
 
-`editor-agent` is a reusable, local, CLI-first coding agent backend that uses NVIDIA's OpenAI-compatible API with the free model endpoint `minimaxai/minimax-m2.7`.
+`editor-agent` is a local, CLI-first coding agent backend that exposes a stable OpenAI-compatible proxy for editor clients such as Continue.
 
-This project currently includes Phase 1, Phase 2, and Phase 3 safe capabilities:
+The external proxy model id remains:
 
-- no automatic file editing
-- patch preview only, with no automatic patch apply
-- no automatic command execution
-- no destructive operations
-- session outputs are saved locally under `state/sessions`
-- patch proposals are saved locally under `state/patches`
-- apply mode requires an explicit `--confirm` flag
-- backups are created under `state/backups` before each file write
-- failed apply runs rollback written files from backup
+- `laz-agent`
+
+The default NVIDIA backend model is now:
+
+- `moonshotai/kimi-k2-instruct`
+
+The project is optimized for:
+
+- stable code analysis
+- stable code review
+- non-streaming OpenAI-compatible requests
+- smaller, predictable workspace context
+- safe failure handling when the backend is slow or unavailable
 
 ## Features
 
-- `health` checks local config and endpoint readiness inputs
-- `analyze` scans a workspace and summarizes what it contains
-- `ask` asks a question about a workspace
-- `suggest` asks for safe, non-executing suggestions to move a project forward
-- `patch-preview` generates file-by-file proposed changes without modifying files
-- `apply` can write explicitly proposed file changes only when `--confirm` is provided
-- FastAPI server exposes editor-friendly JSON endpoints on localhost
-- OpenAI-compatible compatibility endpoints are available alongside the custom endpoints
-- safe file scanning with ignore rules and extension allowlist
-- UTF-8-safe file reads with binary detection
-- relevant file ranking based on the task and project signals
-- structured prompts and structured terminal output
+- CLI commands for `health`, `analyze`, `ask`, `suggest`, `patch-preview`, and `apply`
+- FastAPI local server with custom endpoints and OpenAI-compatible endpoints
+- non-streaming `GET /v1/models`
+- non-streaming `POST /v1/chat/completions`
+- review mode with structured output
+- deterministic `.env` loading from the current working directory
+- fail-fast startup if `NVIDIA_API_KEY` is missing
+- bounded retries and timeout handling for NVIDIA requests
+- safe fallback responses when backend inference times out
 
 ## Project Layout
 
@@ -58,8 +59,9 @@ editor-agent/
       orchestrator.py
       patch_preview.py
       planner.py
-      suggester.py
+      review_verifier.py
       response_parser.py
+      suggester.py
     tools/
       __init__.py
       apply_tools.py
@@ -78,6 +80,8 @@ editor-agent/
       schemas.py
       service.py
   tests/
+    test_env_loading.py
+    test_openai_api.py
     test_openai_compat.py
   state/
     sessions/
@@ -103,12 +107,10 @@ pip install -r requirements.txt
 Copy-Item .env.example .env
 ```
 
-Then edit `.env` and set `NVIDIA_API_KEY`.
-
 ## Environment Setup
 
 1. Create `.env` in the project root.
-2. Add:
+2. Add your NVIDIA API key:
 
 ```env
 NVIDIA_API_KEY=nvapi-...
@@ -121,141 +123,97 @@ Set-Location C:\Users\Cevat\Documents\Github\Laz-Agent\editor-agent
 python .\server.py
 ```
 
-Environment loading is explicit and deterministic:
+Environment loading is explicit:
 
-- the server loads `.env` using `find_dotenv(usecwd=True)`
-- the loaded path is printed at startup
-- startup fails fast if `NVIDIA_API_KEY` is missing
+- `.env` is loaded with `find_dotenv(usecwd=True)`
+- loaded path is printed at startup
+- startup fails immediately if `NVIDIA_API_KEY` is missing
 
-## Commands
+## Stable Defaults
 
-### Health
+Default backend configuration:
 
-```powershell
-python .\main.py health
-```
+- `NVIDIA_MODEL=moonshotai/kimi-k2-instruct`
+- `AGENT_TEMPERATURE=0.1`
+- `AGENT_TIMEOUT_SECONDS=25`
+- `AGENT_MAX_FILE_BYTES=120000`
+- `AGENT_MAX_CHARS_PER_FILE=2500`
+- `AGENT_MAX_CONTEXT_CHARS=12000`
+- `AGENT_TOP_K_FILES=5`
+- `AGENT_MAX_COMPLETION_TOKENS=1000`
 
-### Analyze a project
+These remain configurable via environment variables.
 
-```powershell
-python .\main.py analyze .
-```
-
-### Ask a question about a project
-
-```powershell
-python .\main.py ask . "What does this project do?"
-```
-
-### Get suggestions
+## Running The Server
 
 ```powershell
-python .\main.py suggest . "Find what is missing to run this project"
-```
-
-### Generate a patch preview
-
-```powershell
-python .\main.py patch-preview . "Add missing environment setup docs"
-```
-
-### Generate and apply an approved patch
-
-Preview only, no file writes:
-
-```powershell
-python .\main.py apply . "Implement the approved patch"
-```
-
-Apply with explicit confirmation:
-
-```powershell
-python .\main.py apply . "Implement the approved patch" --confirm
-```
-
-### Start the local HTTP server
-
-```powershell
+Set-Location C:\Users\Cevat\Documents\Github\Laz-Agent\editor-agent
+.\.venv\Scripts\Activate.ps1
 python .\server.py
 ```
 
-Or with Uvicorn directly:
+Or:
 
 ```powershell
 uvicorn agent_core.server.api:app --host 127.0.0.1 --port 8000
 ```
 
-### HTTP endpoints
+## Continue Configuration
 
-- `GET /health`
-- `POST /analyze`
-- `POST /ask`
-- `POST /suggest`
-- `POST /patch-preview`
-- `GET /v1/models`
-- `POST /v1/chat/completions`
+Use the local OpenAI-compatible proxy:
 
-Example request:
+- `apiBase`: `http://127.0.0.1:8000/v1`
+- `model`: `laz-agent`
 
-```powershell
-$body = @{
-  workspace = "C:\Users\Cevat\Documents\Github\Laz-Agent\editor-agent"
-  question = "What does this project do?"
-} | ConvertTo-Json
+Example Continue-style request body:
 
-Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/ask -ContentType "application/json" -Body $body
+```json
+{
+  "model": "laz-agent",
+  "messages": [
+    {"role": "system", "content": "You are a stable code assistant."},
+    {"role": "user", "content": "What does this project do?"}
+  ],
+  "extra_body": {
+    "workspace": "C:/Users/Cevat/Documents/Github/Laz-Agent/editor-agent",
+    "mode": "ask"
+  }
+}
 ```
 
 ## OpenAI-Compatible Endpoints
 
-The server exposes a minimal non-streaming OpenAI-compatible layer for editor and chat clients.
-
-Supported endpoints:
-
 - `GET /v1/models`
 - `POST /v1/chat/completions`
 
-Supported request fields for `POST /v1/chat/completions`:
+Rules:
 
-- `model`
-- `messages`
-- `temperature`
-- `max_tokens`
-- `stream`
-- `extra_body.workspace`
-- `extra_body.mode`
-- `extra_body.changed_files`
-- `extra_body.diff`
-
-Workspace metadata format:
-
-- Preferred: `extra_body.workspace`
-- Preferred mode field: `extra_body.mode`
-- Fallbacks also accepted: `metadata.workspace`, `metadata.mode`, or top-level `workspace` and `mode`
-
-Compatibility rules:
-
+- non-streaming only
 - `workspace` is required
-- `mode` defaults to `ask`
-- allowed modes: `ask`, `analyze`, `suggest`, `patch-preview`
-- allowed modes: `ask`, `analyze`, `suggest`, `patch-preview`, `review`
-- `apply` is not available through `/v1/chat/completions`
-- `stream=true` is rejected for now
+- external model id stays `laz-agent`
+- internal NVIDIA backend model can be changed independently
+- `stream=true` is explicitly rejected
 
-Review mode behavior:
+Supported `extra_body` fields:
 
-- If `extra_body.diff` is present, review focuses on the diff first
-- If `extra_body.changed_files` is present, review prioritizes those files
-- If neither is present, review falls back to a general repository review
-- Review responses are returned as structured JSON inside `choices[0].message.content`
+- `workspace`
+- `mode`
+- `changed_files`
+- `diff`
 
-### OpenAI-Compatible Model List
+Allowed modes:
 
-`curl`:
+- `ask`
+- `analyze`
+- `suggest`
+- `patch-preview`
+- `review`
 
-```bash
-curl http://127.0.0.1:8000/v1/models
-```
+`apply` is not exposed through the OpenAI-compatible endpoint.
+
+## Examples
+
+### Model List
 
 PowerShell:
 
@@ -263,15 +221,13 @@ PowerShell:
 Invoke-RestMethod -Method Get -Uri http://127.0.0.1:8000/v1/models
 ```
 
-### OpenAI-Compatible Chat Completions
-
-`curl`:
+curl:
 
 ```bash
-curl http://127.0.0.1:8000/v1/chat/completions ^
-  -H "Content-Type: application/json" ^
-  -d "{\"model\":\"laz-agent\",\"messages\":[{\"role\":\"system\",\"content\":\"You are a code assistant.\"},{\"role\":\"user\",\"content\":\"What does this project do?\"}],\"temperature\":0.2,\"max_tokens\":1200,\"extra_body\":{\"workspace\":\"C:/Users/Cevat/Documents/Github/Laz-Agent/editor-agent\",\"mode\":\"ask\"}}"
+curl http://127.0.0.1:8000/v1/models
 ```
+
+### Ask Request
 
 PowerShell:
 
@@ -281,15 +237,13 @@ $body = @{
   messages = @(
     @{
       role = "system"
-      content = "You are a code assistant."
+      content = "You are a stable code assistant."
     },
     @{
       role = "user"
       content = "What does this project do?"
     }
   )
-  temperature = 0.2
-  max_tokens = 1200
   extra_body = @{
     workspace = "C:/Users/Cevat/Documents/Github/Laz-Agent/editor-agent"
     mode = "ask"
@@ -302,146 +256,88 @@ Invoke-RestMethod -Method Post `
   -Body $body
 ```
 
-Example request body:
+### Review Request
 
 ```json
 {
   "model": "laz-agent",
   "messages": [
-    {"role": "system", "content": "You are a code assistant."},
-    {"role": "user", "content": "What does this project do?"}
-  ],
-  "temperature": 0.2,
-  "max_tokens": 1200,
-  "extra_body": {
-    "workspace": "C:/Users/Cevat/Documents/Github/Laz-Agent/editor-agent",
-    "mode": "ask"
-  }
-}
-```
-
-Example review request body:
-
-```json
-{
-  "model": "laz-agent",
-  "messages": [
-    {"role": "system", "content": "You are a reliable code review engine."},
+    {"role": "system", "content": "You are a stable code review engine."},
     {"role": "user", "content": "Review the recent changes for correctness and risk."}
   ],
-  "temperature": 0.2,
-  "max_tokens": 1200,
   "extra_body": {
     "workspace": "C:/Users/Cevat/Documents/Github/Laz-Agent/editor-agent",
     "mode": "review",
-    "changed_files": ["agent_core/server/api.py", "agent_core/server/service.py"],
-    "diff": "diff --git a/agent_core/server/api.py b/agent_core/server/api.py"
+    "changed_files": ["agent_core/server/api.py", "agent_core/nvidia_client.py"]
   }
 }
 ```
 
-Example review response content:
+### Review Response Shape
+
+Review responses are returned inside `choices[0].message.content` as structured JSON text:
 
 ```json
 {
   "summary": "Review completed with one verified finding.",
   "findings": [
     {
-      "title": "Unhandled invalid mode path",
+      "title": "Timeout fallback message can leak backend details",
       "severity": "medium",
       "file": "agent_core/server/api.py",
-      "evidence": "validate_openai_mode",
-      "issue": "Invalid mode handling could return an inconsistent compatibility error path.",
-      "suggested_fix": "Wrap mode validation in a guarded error conversion path."
+      "evidence": "build_openai_fallback_response",
+      "issue": "An unstable fallback would reduce Continue compatibility.",
+      "suggested_fix": "Return a fixed safe fallback message."
     }
   ],
-  "risks": "Moderate request validation risk if compatibility clients send unexpected metadata.",
-  "next_steps": "Fix the verified finding and run the compatibility tests again."
+  "risks": "Moderate reliability risk under backend instability.",
+  "next_steps": "Fix the verified finding and re-run the compatibility tests."
 }
 ```
 
-## Configuration
+## Timeout And Failure Behavior
 
-The app reads environment variables from `.env` when available.
+The proxy does not stream and does not wait indefinitely.
+
+Current behavior:
+
+- bounded request timeout
+- explicit connect/read/write/pool timeouts
+- capped retry attempts
+- capped backoff between retries
+- safe fallback response when the NVIDIA backend times out
+
+If inference times out, the response remains OpenAI-compatible and the assistant message contains:
+
+`The model backend timed out while generating a response. Please retry with a smaller request or a narrower workspace context.`
+
+If responses are slow:
+
+- reduce `changed_files`
+- send a smaller diff
+- narrow the workspace
+- lower prompt complexity
+- keep review scope to the files you actually changed
+
+## Configuration
 
 - `NVIDIA_API_KEY`: required for model calls
 - `NVIDIA_BASE_URL`: defaults to `https://integrate.api.nvidia.com/v1`
-- `NVIDIA_MODEL`: defaults to `minimaxai/minimax-m2.7`
-- `AGENT_TEMPERATURE`: defaults to `0.2`
-- `AGENT_TIMEOUT_SECONDS`: defaults to `60`
-- `AGENT_MAX_FILE_BYTES`: max bytes per file read
-- `AGENT_MAX_CONTEXT_CHARS`: total context budget passed to the model
-- `AGENT_TOP_K_FILES`: how many files to send as high-priority context
+- `NVIDIA_MODEL`: defaults to `moonshotai/kimi-k2-instruct`
+- `AGENT_TEMPERATURE`: defaults to `0.1`
+- `AGENT_TIMEOUT_SECONDS`: defaults to `25`
+- `AGENT_MAX_FILE_BYTES`: defaults to `120000`
+- `AGENT_MAX_CHARS_PER_FILE`: defaults to `2500`
+- `AGENT_MAX_CONTEXT_CHARS`: defaults to `12000`
+- `AGENT_TOP_K_FILES`: defaults to `5`
+- `AGENT_MAX_COMPLETION_TOKENS`: defaults to `1000`
 - `AGENT_SERVER_HOST`: defaults to `127.0.0.1`
 - `AGENT_SERVER_PORT`: defaults to `8000`
 
-## Safety Notes
-
-- The agent does not modify project files in Phase 1.
-- The agent does not modify project files in Phase 2 patch preview mode.
-- The agent does not execute shell commands.
-- The agent only suggests commands in text form.
-- Patch previews are proposals only and are never applied automatically.
-- Apply mode writes files only when `--confirm` is present.
-- Apply mode never deletes files or directories automatically.
-- Apply mode creates backups before each file write and rolls back on failure.
-- In this safe version, confirmed apply only updates existing files. New-file creation stays in preview mode until a later phase.
-- The local HTTP server reuses the same orchestration layer as the CLI and returns structured JSON only.
-- The OpenAI-compatible layer is non-streaming only and defaults to `ask` mode.
-- Review mode is optimized for stable, high-confidence code review output.
-- Review findings are verified against actual file content before being returned.
-- The compatibility adapter returns plain text assistant content for stability.
-- Large files, binary files, ignored directories, and disallowed extensions are skipped.
-
-## Session Output
-
-Each `analyze`, `ask`, `suggest`, `patch-preview`, and `apply` run saves a JSON session file under `state/sessions/`.
-
-Each `patch-preview` and `apply` run also saves a dedicated patch proposal JSON file under `state/patches/`.
-
-Confirmed `apply` runs also save an apply log JSON file under `state/logs/`.
-
-The saved data includes:
-
-- command mode
-- target workspace
-- question or goal
-- ranked files
-- workspace summary
-- raw model output
-- parsed response
-- timestamps
-
-Patch proposal files include:
-
-- summary
-- risks
-- affected_files
-- proposed_changes
-- next_steps
-- source session id
-
-Apply log files include:
-
-- session id
-- workspace path
-- whether confirmation was provided
-- files written
-- backup locations
-- rollback status
-- timestamps
-
-## Notes
-
-- Health checks do not make a paid-provider call. They only validate local configuration and endpoint setup inputs.
-- If you want to test a live model response, use `analyze`, `ask`, `suggest`, `patch-preview`, `apply`, or the HTTP endpoints after setting `NVIDIA_API_KEY`.
-
 ## Validation
 
-A small compatibility test is included:
-
 ```powershell
-python -m unittest tests.test_openai_compat
-python -m unittest tests.test_openai_api
-python -m unittest tests.test_env_loading
+.\.venv\Scripts\python.exe -m unittest tests.test_env_loading
+.\.venv\Scripts\python.exe -m unittest tests.test_openai_compat
+.\.venv\Scripts\python.exe -m unittest tests.test_openai_api
 ```
