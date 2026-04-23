@@ -8,14 +8,20 @@ from agent_core.models import ParsedAnswer, ProposedFileOperation, ReviewFinding
 
 class ResponseParser:
     HEADINGS = {
-        "SUMMARY:": "summary",
-        "FINDINGS:": "findings",
-        "SUGGESTIONS:": "suggestions",
-        "COMMANDS_TO_CONSIDER:": "commands_to_consider",
-        "RISKS:": "risks",
-        "AFFECTED_FILES:": "affected_files",
-        "PROPOSED_CHANGES:": "proposed_changes",
-        "NEXT_STEPS:": "next_steps",
+        "summary": "summary",
+        "findings": "findings",
+        "suggestions": "suggestions",
+        "commands to consider": "commands_to_consider",
+        "commands_to_consider": "commands_to_consider",
+        "risks": "risks",
+        "affected files": "affected_files",
+        "affected_files": "affected_files",
+        "proposed changes": "proposed_changes",
+        "proposed_changes": "proposed_changes",
+        "next steps": "next_steps",
+        "next_steps": "next_steps",
+        "file operations": "file_operations",
+        "file_operations": "file_operations",
     }
 
     def parse(self, text: str) -> ParsedAnswer:
@@ -35,7 +41,7 @@ class ResponseParser:
                 if not line:
                     continue
 
-                matched_heading = next((key for key in self.HEADINGS if line.upper() == key), None)
+                matched_heading = next((key for key in self.HEADINGS if line.lower().rstrip(":") == key), None)
                 if matched_heading:
                     current_key = self.HEADINGS[matched_heading]
                     continue

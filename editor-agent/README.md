@@ -8,7 +8,7 @@ The external proxy model id remains:
 
 The default NVIDIA backend model is now:
 
-- `moonshotai/kimi-k2-instruct`
+- `minimaxai/minimax-m2.7`
 
 The project is optimized for:
 
@@ -97,7 +97,7 @@ Copy-Item .env.example .env
 2. Add your NVIDIA API key:
 
 ```env
-NVIDIA_API_KEY=nvapi-...
+NVIDIA_API_KEY=your-nvidia-key-here
 ```
 
 3. Start the server only from the project root:
@@ -117,7 +117,7 @@ Environment loading is explicit:
 
 Default backend configuration:
 
-- `NVIDIA_MODEL=moonshotai/kimi-k2-instruct`
+- `NVIDIA_MODEL=minimaxai/minimax-m2.7`
 - `AGENT_TEMPERATURE=0.1`
 - `AGENT_TIMEOUT_SECONDS=18`
 - `AGENT_MAX_FILE_BYTES=120000`
@@ -319,7 +319,7 @@ If responses are slow:
 
 - `NVIDIA_API_KEY`: required for model calls
 - `NVIDIA_BASE_URL`: defaults to `https://integrate.api.nvidia.com/v1`
-- `NVIDIA_MODEL`: defaults to `moonshotai/kimi-k2-instruct`
+- `NVIDIA_MODEL`: defaults to `minimaxai/minimax-m2.7`
 - `AGENT_TEMPERATURE`: defaults to `0.1`
 - `AGENT_TIMEOUT_SECONDS`: defaults to `18`
 - `AGENT_MAX_FILE_BYTES`: defaults to `120000`

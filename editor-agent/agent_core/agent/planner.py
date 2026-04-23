@@ -6,7 +6,7 @@ from agent_core.models import AgentMode
 class AgentPlanner:
     def plan_label(self, mode: AgentMode) -> str:
         if mode == AgentMode.ANALYZE:
-            return "Workspace analysis"
+            return "Analyze"
         if mode == AgentMode.ASK:
-            return "Workspace question answering"
-        return "Safe suggestion planning"
+            return "Ask"
+        return "Suggest"
