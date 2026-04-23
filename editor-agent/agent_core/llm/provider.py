@@ -13,6 +13,7 @@ class LLMProvider(ABC):
         messages: Iterable[ChatMessage],
         temperature_override: float | str | None = None,
         max_tokens_override: int | None = None,
+        model_override: str | None = None,
     ) -> ModelResponse:
         """Execute a non-streaming chat completion."""
         pass

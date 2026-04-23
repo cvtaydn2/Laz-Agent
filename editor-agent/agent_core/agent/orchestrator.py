@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import asyncio
+from textwrap import dedent
 from typing import Any, Iterable, AsyncIterable
 from pathlib import Path
 
@@ -22,6 +24,7 @@ from agent_core.models import (
     SessionRecord,
     build_session_id,
     utc_now,
+    ComparisonResult,
 )
 from agent_core.llm import get_llm_provider
 from agent_core.llm.nvidia import NvidiaBackendError, NvidiaTimeoutError
@@ -145,29 +148,45 @@ class AgentOrchestrator:
         ]
         self.logger.debug("System prompt length: %d", len(prompt_bundle.system_prompt))
         self.logger.debug("User prompt length: %d", len(prompt_bundle.user_prompt))
-        try:
-            model_response = await self.client.chat(
-                messages,
+        model_response: ModelResponse | None = None
+        parsed: ParsedAnswer | None = None
+
+        if mode == AgentMode.COMPARE:
+            self.logger.info("Entering comparison mode logic...")
+            comparison = await self._run_comparison(
+                messages=messages,
                 temperature_override=temperature_override,
                 max_tokens_override=max_tokens_override,
+                workspace_path=workspace_path
             )
-        except (NvidiaTimeoutError, NvidiaBackendError):
-            self.logger.exception(
-                "Backend inference failed: workspace=%s mode=%s backend_model=%s",
-                workspace_path,
-                mode.value,
-                self.settings.nvidia_model,
-            )
-            raise
-        try:
-            parsed = self.response_parser.parse(model_response.content)
-        except Exception:
-            self.logger.exception("Response parsing failed; falling back to raw model text.")
-            parsed = ParsedAnswer(
-                summary=model_response.content.strip() or "No model content returned.",
-                raw_text=model_response.content,
-                parse_strategy="raw_text",
-            )
+            parsed = comparison.final_answer
+            model_response = ModelResponse(content=comparison.judge_thought, status="ok", usage={})
+        else:
+            comparison = None
+            try:
+                model_response = await self.client.chat(
+                    messages,
+                    temperature_override=temperature_override,
+                    max_tokens_override=max_tokens_override,
+                )
+            except (NvidiaTimeoutError, NvidiaBackendError):
+                self.logger.exception(
+                    "Backend inference failed: workspace=%s mode=%s backend_model=%s",
+                    workspace_path,
+                    mode.value,
+                    self.settings.nvidia_model,
+                )
+                raise
+        if not parsed:
+            try:
+                parsed = self.response_parser.parse(model_response.content)
+            except Exception:
+                self.logger.exception("Response parsing failed; falling back to raw model text.")
+                parsed = ParsedAnswer(
+                    summary=model_response.content.strip() or "No model content returned.",
+                    raw_text=model_response.content,
+                    parse_strategy="raw_text",
+                )
         session_id = build_session_id(mode)
         created_at = utc_now()
 
@@ -239,6 +258,7 @@ class AgentOrchestrator:
             patch_proposal_path=patch_proposal_path,
             apply_log_path=apply_log_path,
             confirmed=confirm,
+            comparison=comparison,
         )
         await self.session_writer.write(session)
         self.logger.info(
@@ -418,7 +438,16 @@ class AgentOrchestrator:
     ) -> bool:
         if changed_files or diff_text:
             return True
-        if mode in {AgentMode.ANALYZE, AgentMode.SUGGEST, AgentMode.PATCH_PREVIEW, AgentMode.APPLY, AgentMode.REVIEW}:
+        if mode in {
+            AgentMode.ANALYZE, 
+            AgentMode.SUGGEST, 
+            AgentMode.PATCH_PREVIEW, 
+            AgentMode.APPLY, 
+            AgentMode.REVIEW,
+            AgentMode.BUG_HUNT,
+            AgentMode.FIX,
+            AgentMode.COMPARE
+        }:
             return True
         text = (user_input or "").strip().lower()
         if not text:
@@ -471,4 +500,71 @@ class AgentOrchestrator:
             sampled_files=[],
             notes=["Workspace context intentionally skipped for a general request."],
             preferred_files=changed_files or [],
+        )
+
+    async def _run_comparison(
+        self,
+        messages: list[ChatMessage],
+        temperature_override: float | None,
+        max_tokens_override: int | None,
+        workspace_path: Path
+    ) -> ComparisonResult:
+        self.logger.info("Running parallel models for comparison.")
+        
+        # 1. Run both models in parallel
+        primary_task = self.client.chat(
+            messages, 
+            temperature_override=temperature_override, 
+            max_tokens_override=max_tokens_override,
+            model_override=self.settings.nvidia_model
+        )
+        secondary_task = self.client.chat(
+            messages,
+            temperature_override=temperature_override,
+            max_tokens_override=max_tokens_override,
+            model_override=self.settings.nvidia_fallback_model
+        )
+        
+        primary_res, secondary_res = await asyncio.gather(primary_task, secondary_task)
+        
+        primary_parsed = self.response_parser.parse(primary_res.content)
+        secondary_parsed = self.response_parser.parse(secondary_res.content)
+        
+        # 2. Prepare Judge Prompt
+        from agent_core.prompts import JUDGE_SYSTEM_PROMPT
+        judge_user_prompt = dedent(f"""
+            ### MODEL A (Primary):
+            {primary_res.content}
+            
+            ### MODEL B (Secondary):
+            {secondary_res.content}
+            
+            ### GÖREV:
+            Hangi çözüm daha mantıklı? Eğer biri açıkça üstünse onu seç (winner: primary veya winner: secondary). 
+            Eğer her ikisinin iyi yanları varsa birleştir ve 'winner: merged' olarak sun.
+        """).strip()
+        
+        judge_messages = [
+            ChatMessage(role="system", content=JUDGE_SYSTEM_PROMPT),
+            ChatMessage(role="user", content=judge_user_prompt)
+        ]
+        
+        # 3. Judge decides (using primary model as judge)
+        judge_res = await self.client.chat(judge_messages, temperature_override=0.1)
+        
+        winner_match = re.search(r"winner:\s*(primary|secondary|merged)", judge_res.content, re.IGNORECASE)
+        winner = winner_match.group(1).lower() if winner_match else "primary"
+        
+        final_parsed = self.response_parser.parse(judge_res.content)
+        if winner == "primary":
+            final_parsed = primary_parsed
+        elif winner == "secondary":
+            final_parsed = secondary_parsed
+            
+        return ComparisonResult(
+            primary_answer=primary_parsed,
+            secondary_answer=secondary_parsed,
+            judge_thought=judge_res.content,
+            winner=winner,
+            final_answer=final_parsed
         )

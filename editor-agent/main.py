@@ -137,6 +137,68 @@ def rollback(
         raise typer.Exit(code=1)
 
 
+@app.command(help="Compare primary and fallback models for the best architectural answer.")
+def compare(
+    workspace: str = typer.Argument(..., help="Path to the workspace directory."),
+    request: str = typer.Argument(..., help="The request to compare model outputs for.")
+) -> None:
+    """Compare primary and secondary models."""
+    orchestrator = _build_orchestrator()
+    response = asyncio.run(orchestrator.run(
+        mode=AgentMode.COMPARE,
+        workspace_path=_resolve_workspace(workspace),
+        user_input=request,
+    ))
+    render_response(console, response)
+
+
+@app.command("bug-hunt", help="Deep dive into the workspace to find hidden bugs, race conditions, or performance leaks.")
+def bug_hunt(
+    workspace: str = typer.Argument(..., help="Path to the workspace directory."),
+    target: Optional[str] = typer.Option(None, "--target", help="Specific area or issue to focus on.")
+) -> None:
+    """Deep hunt for bugs in the workspace."""
+    orchestrator = _build_orchestrator()
+    response = asyncio.run(orchestrator.run(
+        mode=AgentMode.BUG_HUNT,
+        workspace_path=_resolve_workspace(workspace),
+        user_input=target,
+    ))
+    render_response(console, response)
+
+
+@app.command(help="Focus strictly on fixing a specific bug or issue with high precision.")
+def fix(
+    workspace: str = typer.Argument(..., help="Path to the workspace directory."),
+    issue: str = typer.Argument(..., help="The specific bug or issue to fix."),
+    confirm: bool = typer.Option(False, "--confirm", help="Automatically apply the fix.")
+) -> None:
+    """Fix a specific bug with precision."""
+    orchestrator = _build_orchestrator()
+    response = asyncio.run(orchestrator.run(
+        mode=AgentMode.FIX,
+        workspace_path=_resolve_workspace(workspace),
+        user_input=issue,
+        confirm=confirm,
+    ))
+    render_response(console, response)
+
+
+@app.command(help="Perform a formal code review of a file or the entire workspace.")
+def review(
+    workspace: str = typer.Argument(..., help="Path to the workspace directory."),
+    target: Optional[str] = typer.Option(None, "--target", help="Specific file or directory to review.")
+) -> None:
+    """Perform a code review."""
+    orchestrator = _build_orchestrator()
+    response = asyncio.run(orchestrator.run(
+        mode=AgentMode.REVIEW,
+        workspace_path=_resolve_workspace(workspace),
+        user_input=target,
+    ))
+    render_response(console, response)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     app(args=argv)
     return 0

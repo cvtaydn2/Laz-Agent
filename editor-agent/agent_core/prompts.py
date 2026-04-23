@@ -21,6 +21,18 @@ NVIDIA'nın en güçlü modelleriyle (Minimax-M2.7 ve Moonshot-Kimi) donatıldı
 - Kod önerilerinde her zaman performans ve güvenliği ön planda tut.
 - Jenerik özetler yerine, o anki kodun karakteristiğine odaklanan özgün cümleler kur.
 """
+JUDGE_SYSTEM_PROMPT = """
+Sen **Laz-Agent Baş Hakemi (Chief Judge)** rolündesin. 
+İki farklı yapay zeka modelinden gelen çözüm önerilerini karşılaştırmak ve en doğru, güvenli, performanslı olanı seçmekle görevlisin.
+
+### Görevin:
+1. **Analiz**: Her iki modelin düşünce sürecini (thought) ve önerdiği kodları incele.
+2. **Kıyaslama**: Hangi çözümün projenin mimarisine daha uygun olduğunu, daha az yan etki (side effect) barındırdığını belirle.
+3. **Karar**: Birinci modeli mi (Primary), ikinci modeli mi (Secondary) seçeceğine veya her ikisinden en iyi parçaları birleştirip (Merged) yeni bir çözüm mü sunacağına karar ver.
+4. **Gerekçe**: Kararını teknik detaylarla açıkla.
+
+Sonuç olarak mutlaka 'winner: [primary|secondary|merged]' etiketini kullan ve seçilen/birleştirilen final çözümü standart Laz-Agent formatında sun.
+"""
 
 ASK_SYSTEM_PROMPT = dedent(
     """
@@ -159,6 +171,39 @@ def _task_instruction(mode: AgentMode, user_input: str | None) -> str:
             "If a diff is provided, review the diff first. If changed files are provided, focus on those files. "
             "If neither is provided, perform a general repository review.\n"
             f"REVIEW_REQUEST: {user_input or 'Review the provided code context.'}"
+        )
+    if mode == AgentMode.BUG_HUNT:
+        return (
+            "OUTPUT_HEADINGS:\n"
+            "thought:\n"
+            "summary:\n"
+            "findings:\n"
+            "risks:\n"
+            "commands_to_consider:\n\n"
+            "TASK: Derinlemesine bir Hata Avı (Bug Hunt) gerçekleştir. Kodda gizli kalmış race condition, "
+            "bellek sızıntısı, yanlış hata yönetimi veya mantık hatalarını (logic errors) tespit et. "
+            "Sadece yüzeydeki hataları değil, çalışma zamanı (runtime) problemlerini de öngör.\n"
+            f"TARGET_ISSUE: {user_input or 'Tüm çalışma alanında kritik hataları ara.'}"
+        )
+    if mode == AgentMode.FIX:
+        return (
+            "OUTPUT_HEADINGS:\n"
+            "thought:\n"
+            "summary:\n"
+            "affected_files:\n"
+            "file_operations:\n"
+            "command_operations:\n"
+            "next_steps:\n\n"
+            "TASK: Verilen hatayı veya sorunu KESİN olarak çözmek için bir yama (patch) hazırla. "
+            "Çözümün doğruluğunu kontrol etmek için 'command_operations' altında test komutları öner. "
+            "Minimum değişiklik ile maksimum stabiliteyi hedefle.\n"
+            f"FIX_REQUEST: {user_input}"
+        )
+    if mode == AgentMode.COMPARE:
+        return (
+            "TASK: Bu istek için en iyi çözümü bulmak amacıyla derinlemesine düşün. "
+            "Yanıtta tüm standart başlıkları (thought, summary, file_operations vb.) kullan. "
+            f"REQUEST: {user_input}"
         )
     return (
         "OUTPUT_HEADINGS:\n"

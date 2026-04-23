@@ -15,6 +15,9 @@ class AgentMode(str, Enum):
     PATCH_PREVIEW = "patch_preview"
     APPLY = "apply"
     REVIEW = "review"
+    COMPARE = "compare"
+    BUG_HUNT = "bug_hunt"
+    FIX = "fix"
 
 
 class FileScanResult(BaseModel):
@@ -133,6 +136,14 @@ class CommandExecutionRecord(BaseModel):
     success: bool
 
 
+class ComparisonResult(BaseModel):
+    primary_answer: ParsedAnswer
+    secondary_answer: ParsedAnswer
+    judge_thought: str
+    winner: str  # "primary", "secondary", or "merged"
+    final_answer: ParsedAnswer
+
+
 class SessionRecord(BaseModel):
     session_id: str
     created_at: datetime
@@ -148,6 +159,9 @@ class SessionRecord(BaseModel):
     patch_proposal_path: str | None = None
     apply_log_path: str | None = None
     confirmed: bool = False
+    comparison: ComparisonResult | None = None
+
+
 
 
 class HealthStatus(BaseModel):

@@ -29,6 +29,9 @@ def render_response(console: Console, session: SessionRecord) -> None:
     if parsed.thought:
         _safe_panel(console, parsed.thought, title="Reasoning & Planning", style="dim cyan")
 
+    if session.comparison:
+        _render_comparison(console, session.comparison)
+
     _safe_panel(console, parsed.summary, title=f"{session.mode.value.title()} Summary")
 
     table = Table(title="Workspace Snapshot")
@@ -81,3 +84,9 @@ def _render_list(console: Console, title: str, items: list[str]) -> None:
         return
     rendered = "\n".join(f"- {item}" for item in items)
     _safe_panel(console, rendered, title=title)
+
+
+def _render_comparison(console: Console, comparison: "ComparisonResult") -> None:
+    _safe_panel(console, comparison.primary_answer.summary, title="Model A (Primary) Answer", style="blue")
+    _safe_panel(console, comparison.secondary_answer.summary, title="Model B (Secondary) Answer", style="green")
+    _safe_panel(console, comparison.judge_thought, title=f"Judge Decision (Winner: {comparison.winner})", style="bold magenta")

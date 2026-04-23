@@ -49,13 +49,17 @@ class NvidiaProvider(LLMProvider):
         messages: Iterable[ChatMessage],
         temperature_override: float | str | None = None,
         max_tokens_override: int | None = None,
+        model_override: str | None = None,
     ) -> ModelResponse:
         if not self.settings.nvidia_api_key:
             raise ValueError("NVIDIA_API_KEY is not configured.")
 
-        models_to_try = [self.settings.nvidia_model]
-        if self.settings.nvidia_fallback_model and self.settings.nvidia_fallback_model != self.settings.nvidia_model:
-            models_to_try.append(self.settings.nvidia_fallback_model)
+        if model_override:
+            models_to_try = [model_override]
+        else:
+            models_to_try = [self.settings.nvidia_model]
+            if self.settings.nvidia_fallback_model and self.settings.nvidia_fallback_model != self.settings.nvidia_model:
+                models_to_try.append(self.settings.nvidia_fallback_model)
 
         last_exception: Exception | None = None
         started_at = time.monotonic()
