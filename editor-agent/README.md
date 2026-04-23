@@ -22,6 +22,7 @@ This project currently includes Phase 1, Phase 2, and Phase 3 safe capabilities:
 - `suggest` asks for safe, non-executing suggestions to move a project forward
 - `patch-preview` generates file-by-file proposed changes without modifying files
 - `apply` can write explicitly proposed file changes only when `--confirm` is provided
+- FastAPI server exposes editor-friendly JSON endpoints on localhost
 - safe file scanning with ignore rules and extension allowlist
 - UTF-8-safe file reads with binary detection
 - relevant file ranking based on the task and project signals
@@ -36,6 +37,7 @@ editor-agent/
   README.md
   requirements.txt
   main.py
+  server.py
   agent_core/
     __init__.py
     config.py
@@ -67,6 +69,11 @@ editor-agent/
       __init__.py
       formatter.py
       writers.py
+    server/
+      __init__.py
+      api.py
+      schemas.py
+      service.py
   state/
     sessions/
     logs/
@@ -139,6 +146,37 @@ Apply with explicit confirmation:
 python .\main.py apply . "Implement the approved patch" --confirm
 ```
 
+### Start the local HTTP server
+
+```powershell
+python .\server.py
+```
+
+Or with Uvicorn directly:
+
+```powershell
+uvicorn agent_core.server.api:app --host 127.0.0.1 --port 8000
+```
+
+### HTTP endpoints
+
+- `GET /health`
+- `POST /analyze`
+- `POST /ask`
+- `POST /suggest`
+- `POST /patch-preview`
+
+Example request:
+
+```powershell
+$body = @{
+  workspace = "C:\Users\Cevat\Documents\Github\Laz-Agent\editor-agent"
+  question = "What does this project do?"
+} | ConvertTo-Json
+
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:8000/ask -ContentType "application/json" -Body $body
+```
+
 ## Configuration
 
 The app reads environment variables from `.env` when available.
@@ -151,6 +189,8 @@ The app reads environment variables from `.env` when available.
 - `AGENT_MAX_FILE_BYTES`: max bytes per file read
 - `AGENT_MAX_CONTEXT_CHARS`: total context budget passed to the model
 - `AGENT_TOP_K_FILES`: how many files to send as high-priority context
+- `AGENT_SERVER_HOST`: defaults to `127.0.0.1`
+- `AGENT_SERVER_PORT`: defaults to `8000`
 
 ## Safety Notes
 
@@ -163,6 +203,7 @@ The app reads environment variables from `.env` when available.
 - Apply mode never deletes files or directories automatically.
 - Apply mode creates backups before each file write and rolls back on failure.
 - In this safe version, confirmed apply only updates existing files. New-file creation stays in preview mode until a later phase.
+- The local HTTP server reuses the same orchestration layer as the CLI and returns structured JSON only.
 - Large files, binary files, ignored directories, and disallowed extensions are skipped.
 
 ## Session Output
@@ -206,4 +247,4 @@ Apply log files include:
 ## Notes
 
 - Health checks do not make a paid-provider call. They only validate local configuration and endpoint setup inputs.
-- If you want to test a live model response, use `analyze`, `ask`, `suggest`, `patch-preview`, or `apply` after setting `NVIDIA_API_KEY`.
+- If you want to test a live model response, use `analyze`, `ask`, `suggest`, `patch-preview`, `apply`, or the HTTP endpoints after setting `NVIDIA_API_KEY`.

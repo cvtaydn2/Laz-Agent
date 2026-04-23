@@ -50,6 +50,8 @@ class Settings(BaseModel):
     max_file_bytes: int = Field(default=200000, alias="AGENT_MAX_FILE_BYTES")
     max_context_chars: int = Field(default=24000, alias="AGENT_MAX_CONTEXT_CHARS")
     top_k_files: int = Field(default=8, alias="AGENT_TOP_K_FILES")
+    server_host: str = Field(default="127.0.0.1", alias="AGENT_SERVER_HOST")
+    server_port: int = Field(default=8000, alias="AGENT_SERVER_PORT")
 
     @classmethod
     def load(cls) -> "Settings":
@@ -63,6 +65,8 @@ class Settings(BaseModel):
             max_file_bytes=int(os.getenv("AGENT_MAX_FILE_BYTES", "200000")),
             max_context_chars=int(os.getenv("AGENT_MAX_CONTEXT_CHARS", "24000")),
             top_k_files=int(os.getenv("AGENT_TOP_K_FILES", "8")),
+            server_host=os.getenv("AGENT_SERVER_HOST", "127.0.0.1"),
+            server_port=int(os.getenv("AGENT_SERVER_PORT", "8000")),
         )
         settings.ensure_state_dirs()
         return settings
