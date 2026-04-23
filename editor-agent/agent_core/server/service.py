@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from agent_core.agent.orchestrator import AgentOrchestrator
 from agent_core.config import Settings
 from agent_core.logger import configure_logger
-from agent_core.models import AgentMode, HealthStatus, SessionRecord
+from agent_core.models import AgentMode, HealthStatus, ParsedAnswer, SessionRecord, WorkspaceSummary, build_session_id, utc_now
 
 
 def resolve_workspace_or_400(workspace: str) -> Path:
@@ -47,6 +47,8 @@ def run_agent(
     user_input: str | None,
     temperature_override: float | None = None,
     max_tokens_override: int | None = None,
+    changed_files: list[str] | None = None,
+    diff_text: str | None = None,
 ) -> SessionRecord:
     logger = build_server_logger()
     orchestrator = build_orchestrator()
@@ -58,10 +60,36 @@ def run_agent(
             user_input=user_input,
             temperature_override=temperature_override,
             max_tokens_override=max_tokens_override,
+            changed_files=changed_files,
+            diff_text=diff_text,
         )
     except ValueError as exc:
         logger.exception("Validation error while running agent mode=%s workspace=%s", mode.value, workspace)
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Unhandled server error while running agent mode=%s workspace=%s", mode.value, workspace)
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        return SessionRecord(
+            session_id=build_session_id(mode),
+            created_at=utc_now(),
+            mode=mode,
+            workspace_path=str(workspace_path),
+            prompt=user_input or "",
+            user_input=user_input,
+            workspace_summary=WorkspaceSummary(
+                root_path=str(workspace_path),
+                total_files_scanned=0,
+                included_files=0,
+                skipped_files=0,
+                top_extensions={},
+                sampled_files=[],
+                notes=["Internal error fallback response generated."],
+            ),
+            ranked_files=[],
+            selected_context=[],
+            raw_response=f"Internal processing error: {exc}",
+            parsed_response=ParsedAnswer(
+                summary=f"Internal processing error: {exc}",
+                raw_text=f"Internal processing error: {exc}",
+                parse_strategy="raw_text",
+            ),
+        )

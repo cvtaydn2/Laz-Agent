@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 
-from agent_core.models import ParsedAnswer, ProposedFileOperation
+from agent_core.models import ParsedAnswer, ProposedFileOperation, ReviewFinding
 
 
 class ResponseParser:
@@ -89,6 +89,9 @@ class ResponseParser:
             file_operations=self._parse_json_file_operations(payload.get("file_operations")),
             raw_text=text,
             parse_strategy="json",
+            review_findings=self._parse_review_findings(payload.get("findings")),
+            risks_text=self._string_or_default(payload.get("risks"), ""),
+            next_steps_text=self._string_or_default(payload.get("next_steps"), ""),
         )
 
     def _parse_file_operations(self, text: str) -> list[ProposedFileOperation]:
@@ -153,6 +156,29 @@ class ResponseParser:
                 )
             )
         return operations
+
+    def _parse_review_findings(self, value: object) -> list[ReviewFinding]:
+        if not isinstance(value, list):
+            return []
+
+        findings: list[ReviewFinding] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            try:
+                finding = ReviewFinding(
+                    title=str(item.get("title", "")).strip(),
+                    severity=str(item.get("severity", "")).strip().lower(),
+                    file=str(item.get("file", "")).strip(),
+                    evidence=str(item.get("evidence", "")).strip(),
+                    issue=str(item.get("issue", "")).strip(),
+                    suggested_fix=str(item.get("suggested_fix", "")).strip(),
+                )
+            except Exception:
+                continue
+            if finding.title and finding.file and finding.issue:
+                findings.append(finding)
+        return findings
 
     def _string_or_default(self, value: object, fallback: str) -> str:
         if isinstance(value, str) and value.strip():

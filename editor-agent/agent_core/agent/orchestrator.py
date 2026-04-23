@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from agent_core.agent.review_verifier import ReviewVerifier
 from agent_core.agent.apply_mode import ApplyModePolicy
 from agent_core.agent.patch_preview import PatchPreviewPolicy
 from agent_core.agent.planner import AgentPlanner
@@ -41,6 +42,7 @@ class AgentOrchestrator:
         self.suggestion_policy = SuggestionPolicy()
         self.patch_preview_policy = PatchPreviewPolicy()
         self.apply_policy = ApplyModePolicy()
+        self.review_verifier = ReviewVerifier(settings)
         self.session_writer = SessionWriter(settings)
         self.patch_writer = PatchProposalWriter(settings)
         self.apply_log_writer = ApplyLogWriter(settings)
@@ -55,15 +57,31 @@ class AgentOrchestrator:
         confirm: bool = False,
         temperature_override: float | None = None,
         max_tokens_override: int | None = None,
+        changed_files: list[str] | None = None,
+        diff_text: str | None = None,
     ) -> SessionRecord:
         self.logger.info("Starting run: mode=%s workspace=%s", mode.value, workspace_path)
 
         scan_results, workspace_summary = self.scanner.scan(workspace_path)
-        ranked_files = self.ranker.rank(workspace_path, scan_results, mode, user_input)
+        ranked_files = self.ranker.rank(
+            workspace_path,
+            scan_results,
+            mode,
+            user_input,
+            preferred_files=changed_files,
+        )
         selected_context, reader_notes = self.reader.read_ranked_files(workspace_path, ranked_files)
         workspace_summary.notes.extend(reader_notes)
+        workspace_summary.preferred_files = changed_files or []
 
-        prompt_bundle = build_prompt(mode, workspace_summary, selected_context, user_input)
+        prompt_bundle = build_prompt(
+            mode,
+            workspace_summary,
+            selected_context,
+            user_input,
+            changed_files=changed_files,
+            diff_text=diff_text,
+        )
         messages = [
             ChatMessage(role="system", content=prompt_bundle.system_prompt),
             ChatMessage(role="user", content=prompt_bundle.user_prompt),
@@ -91,6 +109,12 @@ class AgentOrchestrator:
             parsed = self.patch_preview_policy.apply(parsed)
         if mode == AgentMode.APPLY:
             parsed = self.apply_policy.apply(parsed)
+        if mode == AgentMode.REVIEW:
+            parsed = self.review_verifier.verify(
+                workspace_path=workspace_path,
+                parsed=parsed,
+                selected_context=selected_context,
+            )
 
         patch_proposal: PatchProposal | None = None
         patch_proposal_path: str | None = None

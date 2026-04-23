@@ -37,8 +37,10 @@ class NvidiaClient:
             ),
             "messages": [message.model_dump() for message in messages],
         }
-        if max_tokens_override is not None:
-            payload["max_tokens"] = max_tokens_override
+        payload["max_tokens"] = min(
+            max_tokens_override if max_tokens_override is not None else self.settings.max_completion_tokens,
+            self.settings.max_completion_tokens,
+        )
 
         headers = {
             "Authorization": f"Bearer {self.settings.nvidia_api_key}",

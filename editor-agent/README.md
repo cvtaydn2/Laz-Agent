@@ -202,6 +202,8 @@ Supported request fields for `POST /v1/chat/completions`:
 - `stream`
 - `extra_body.workspace`
 - `extra_body.mode`
+- `extra_body.changed_files`
+- `extra_body.diff`
 
 Workspace metadata format:
 
@@ -214,8 +216,16 @@ Compatibility rules:
 - `workspace` is required
 - `mode` defaults to `ask`
 - allowed modes: `ask`, `analyze`, `suggest`, `patch-preview`
+- allowed modes: `ask`, `analyze`, `suggest`, `patch-preview`, `review`
 - `apply` is not available through `/v1/chat/completions`
 - `stream=true` is rejected for now
+
+Review mode behavior:
+
+- If `extra_body.diff` is present, review focuses on the diff first
+- If `extra_body.changed_files` is present, review prioritizes those files
+- If neither is present, review falls back to a general repository review
+- Review responses are returned as structured JSON inside `choices[0].message.content`
 
 ### OpenAI-Compatible Model List
 
@@ -288,6 +298,46 @@ Example request body:
 }
 ```
 
+Example review request body:
+
+```json
+{
+  "model": "laz-agent",
+  "messages": [
+    {"role": "system", "content": "You are a reliable code review engine."},
+    {"role": "user", "content": "Review the recent changes for correctness and risk."}
+  ],
+  "temperature": 0.2,
+  "max_tokens": 1200,
+  "extra_body": {
+    "workspace": "C:/Users/Cevat/Documents/Github/Laz-Agent/editor-agent",
+    "mode": "review",
+    "changed_files": ["agent_core/server/api.py", "agent_core/server/service.py"],
+    "diff": "diff --git a/agent_core/server/api.py b/agent_core/server/api.py"
+  }
+}
+```
+
+Example review response content:
+
+```json
+{
+  "summary": "Review completed with one verified finding.",
+  "findings": [
+    {
+      "title": "Unhandled invalid mode path",
+      "severity": "medium",
+      "file": "agent_core/server/api.py",
+      "evidence": "validate_openai_mode",
+      "issue": "Invalid mode handling could return an inconsistent compatibility error path.",
+      "suggested_fix": "Wrap mode validation in a guarded error conversion path."
+    }
+  ],
+  "risks": "Moderate request validation risk if compatibility clients send unexpected metadata.",
+  "next_steps": "Fix the verified finding and run the compatibility tests again."
+}
+```
+
 ## Configuration
 
 The app reads environment variables from `.env` when available.
@@ -316,6 +366,8 @@ The app reads environment variables from `.env` when available.
 - In this safe version, confirmed apply only updates existing files. New-file creation stays in preview mode until a later phase.
 - The local HTTP server reuses the same orchestration layer as the CLI and returns structured JSON only.
 - The OpenAI-compatible layer is non-streaming only and defaults to `ask` mode.
+- Review mode is optimized for stable, high-confidence code review output.
+- Review findings are verified against actual file content before being returned.
 - The compatibility adapter returns plain text assistant content for stability.
 - Large files, binary files, ignored directories, and disallowed extensions are skipped.
 
@@ -368,4 +420,5 @@ A small compatibility test is included:
 
 ```powershell
 python -m unittest tests.test_openai_compat
+python -m unittest tests.test_openai_api
 ```

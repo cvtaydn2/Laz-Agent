@@ -48,8 +48,10 @@ class Settings(BaseModel):
     temperature: float = Field(default=0.2, alias="AGENT_TEMPERATURE")
     timeout_seconds: float = Field(default=60.0, alias="AGENT_TIMEOUT_SECONDS")
     max_file_bytes: int = Field(default=200000, alias="AGENT_MAX_FILE_BYTES")
+    max_chars_per_file: int = Field(default=4000, alias="AGENT_MAX_CHARS_PER_FILE")
     max_context_chars: int = Field(default=24000, alias="AGENT_MAX_CONTEXT_CHARS")
     top_k_files: int = Field(default=8, alias="AGENT_TOP_K_FILES")
+    max_completion_tokens: int = Field(default=1200, alias="AGENT_MAX_COMPLETION_TOKENS")
     server_host: str = Field(default="127.0.0.1", alias="AGENT_SERVER_HOST")
     server_port: int = Field(default=8000, alias="AGENT_SERVER_PORT")
 
@@ -63,8 +65,10 @@ class Settings(BaseModel):
             temperature=float(os.getenv("AGENT_TEMPERATURE", "0.2")),
             timeout_seconds=float(os.getenv("AGENT_TIMEOUT_SECONDS", "60")),
             max_file_bytes=int(os.getenv("AGENT_MAX_FILE_BYTES", "200000")),
+            max_chars_per_file=int(os.getenv("AGENT_MAX_CHARS_PER_FILE", "4000")),
             max_context_chars=int(os.getenv("AGENT_MAX_CONTEXT_CHARS", "24000")),
             top_k_files=int(os.getenv("AGENT_TOP_K_FILES", "8")),
+            max_completion_tokens=int(os.getenv("AGENT_MAX_COMPLETION_TOKENS", "1200")),
             server_host=os.getenv("AGENT_SERVER_HOST", "127.0.0.1"),
             server_port=int(os.getenv("AGENT_SERVER_PORT", "8000")),
         )

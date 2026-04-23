@@ -48,7 +48,8 @@ class WorkspaceReader:
                 notes.append(f"Skipped empty file {ranked.relative_path}.")
                 continue
 
-            budgeted_content = normalized_content[:remaining_chars]
+            budgeted_content = normalized_content[: self.settings.max_chars_per_file]
+            budgeted_content = budgeted_content[:remaining_chars]
             if not budgeted_content:
                 break
 

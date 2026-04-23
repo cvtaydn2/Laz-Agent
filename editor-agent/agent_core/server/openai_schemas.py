@@ -23,6 +23,8 @@ class OpenAIChatCompletionRequest(BaseModel):
     metadata: dict[str, Any] | None = None
     workspace: str | None = None
     mode: str | None = None
+    changed_files: list[str] | None = None
+    diff: str | None = None
 
 
 class OpenAIModelObject(BaseModel):

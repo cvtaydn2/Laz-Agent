@@ -14,6 +14,7 @@ class AgentMode(str, Enum):
     SUGGEST = "suggest"
     PATCH_PREVIEW = "patch_preview"
     APPLY = "apply"
+    REVIEW = "review"
 
 
 class FileScanResult(BaseModel):
@@ -49,6 +50,16 @@ class WorkspaceSummary(BaseModel):
     top_extensions: dict[str, int]
     sampled_files: list[str]
     notes: list[str] = Field(default_factory=list)
+    preferred_files: list[str] = Field(default_factory=list)
+
+
+class ReviewFinding(BaseModel):
+    title: str
+    severity: str
+    file: str
+    evidence: str
+    issue: str
+    suggested_fix: str
 
 
 class ParsedAnswer(BaseModel):
@@ -63,6 +74,9 @@ class ParsedAnswer(BaseModel):
     file_operations: list["ProposedFileOperation"] = Field(default_factory=list)
     raw_text: str = ""
     parse_strategy: str = "text"
+    review_findings: list[ReviewFinding] = Field(default_factory=list)
+    risks_text: str = ""
+    next_steps_text: str = ""
 
 
 class ProposedFileOperation(BaseModel):

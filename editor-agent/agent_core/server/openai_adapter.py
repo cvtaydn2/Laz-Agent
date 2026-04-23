@@ -14,6 +14,7 @@ from agent_core.server.openai_schemas import (
     OpenAIResponseMessage,
     OpenAIUsage,
 )
+import json
 
 OPENAI_COMPATIBLE_MODEL_ID = "laz-agent"
 OPENAI_ALLOWED_MODES = {
@@ -21,6 +22,7 @@ OPENAI_ALLOWED_MODES = {
     AgentMode.ANALYZE.value,
     AgentMode.SUGGEST.value,
     AgentMode.PATCH_PREVIEW.value,
+    AgentMode.REVIEW.value,
 }
 
 
@@ -75,9 +77,33 @@ def validate_openai_mode(mode: str) -> str:
     if normalized not in OPENAI_ALLOWED_MODES:
         raise ValueError(
             "Unsupported mode for OpenAI-compatible endpoint. "
-            "Allowed values: ask, analyze, suggest, patch-preview."
+            "Allowed values: ask, analyze, suggest, patch-preview, review."
         )
     return normalized.replace("-", "_")
+
+
+def extract_changed_files(request: OpenAIChatCompletionRequest) -> list[str]:
+    for container in (request.extra_body, request.metadata):
+        if isinstance(container, dict):
+            value = container.get("changed_files")
+            if isinstance(value, list):
+                return [str(item).replace("\\", "/").strip() for item in value if str(item).strip()]
+
+    if isinstance(request.changed_files, list):
+        return [str(item).replace("\\", "/").strip() for item in request.changed_files if str(item).strip()]
+    return []
+
+
+def extract_diff(request: OpenAIChatCompletionRequest) -> str | None:
+    for container in (request.extra_body, request.metadata):
+        if isinstance(container, dict):
+            value = container.get("diff")
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+
+    if isinstance(request.diff, str) and request.diff.strip():
+        return request.diff.strip()
+    return None
 
 
 def build_openai_response(
@@ -117,6 +143,8 @@ def build_openai_error(
 
 def session_to_plain_text(session: SessionRecord) -> str:
     parsed = session.parsed_response
+    if session.mode == AgentMode.REVIEW:
+        return json_review_text(session)
     sections: list[str] = []
 
     if parsed.summary.strip():
@@ -140,6 +168,44 @@ def session_to_plain_text(session: SessionRecord) -> str:
         return session.raw_response.strip()
 
     return "The agent completed the request but did not return a formatted response."
+
+
+def json_review_text(session: SessionRecord) -> str:
+    parsed = session.parsed_response
+    findings = [
+        {
+            "title": finding.title,
+            "severity": finding.severity,
+            "file": finding.file,
+            "evidence": finding.evidence,
+            "issue": finding.issue,
+            "suggested_fix": finding.suggested_fix,
+        }
+        for finding in parsed.review_findings
+    ]
+    payload = {
+        "summary": parsed.summary or "Review completed.",
+        "findings": findings,
+        "risks": parsed.risks_text or "\n".join(parsed.risks).strip() or "No major risks identified.",
+        "next_steps": parsed.next_steps_text or "\n".join(parsed.next_steps).strip() or "Review the findings and apply the highest-confidence fixes first.",
+    }
+    return json.dumps(payload, indent=2, ensure_ascii=False)
+
+
+def build_openai_fallback_response(model: str, content: str) -> OpenAIChatCompletionResponse:
+    created = int(datetime.now(timezone.utc).timestamp())
+    return OpenAIChatCompletionResponse(
+        id=f"chatcmpl-fallback-{created}",
+        created=created,
+        model=model or OPENAI_COMPATIBLE_MODEL_ID,
+        choices=[
+            OpenAIChoice(
+                message=OpenAIResponseMessage(content=content),
+                finish_reason="stop",
+            )
+        ],
+        usage=OpenAIUsage(),
+    )
 
 
 def _append_section(target: list[str], title: str, items: list[str]) -> None:

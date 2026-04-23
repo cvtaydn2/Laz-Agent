@@ -7,8 +7,11 @@ from fastapi.responses import JSONResponse
 from agent_core.models import AgentMode
 from agent_core.server.openai_adapter import (
     build_openai_error,
+    build_openai_fallback_response,
     build_openai_models_response,
     build_openai_response,
+    extract_changed_files,
+    extract_diff,
     extract_request_mode,
     extract_request_workspace,
     extract_user_message,
@@ -93,35 +96,44 @@ def list_models() -> OpenAIModelsResponse:
 
 @app.post("/v1/chat/completions")
 def chat_completions(request: OpenAIChatCompletionRequest):
-    if request.stream:
-        raise HTTPException(
-            status_code=400,
-            detail="stream=true is not supported by this server yet.",
-        )
-
-    workspace = extract_request_workspace(request)
-    if not workspace:
-        raise HTTPException(
-            status_code=400,
-            detail="A workspace path is required under extra_body.workspace, metadata.workspace, or top-level workspace.",
-        )
-
     try:
+        if request.stream:
+            raise HTTPException(
+                status_code=400,
+                detail="stream=true is not supported by this server yet.",
+            )
+
+        workspace = extract_request_workspace(request)
+        if not workspace:
+            raise HTTPException(
+                status_code=400,
+                detail="A workspace path is required under extra_body.workspace, metadata.workspace, or top-level workspace.",
+            )
+
         mode_value = validate_openai_mode(extract_request_mode(request))
+        user_message = extract_user_message(request.messages)
+        if not user_message:
+            raise HTTPException(
+                status_code=400,
+                detail="At least one non-empty user message is required.",
+            )
+
+        session = run_agent(
+            AgentMode(mode_value),
+            workspace,
+            user_message,
+            temperature_override=request.temperature,
+            max_tokens_override=request.max_tokens,
+            changed_files=extract_changed_files(request),
+            diff_text=extract_diff(request),
+        )
+        return build_openai_response(session=session, requested_model=request.model)
+    except HTTPException:
+        raise
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    user_message = extract_user_message(request.messages)
-    if not user_message:
-        raise HTTPException(
-            status_code=400,
-            detail="At least one non-empty user message is required.",
+    except Exception as exc:
+        return build_openai_fallback_response(
+            model=request.model,
+            content=f"Internal fallback response: {exc}",
         )
-
-    session = run_agent(
-        AgentMode(mode_value),
-        workspace,
-        user_message,
-        temperature_override=request.temperature,
-        max_tokens_override=request.max_tokens,
-    )
-    return build_openai_response(session=session, requested_model=request.model)

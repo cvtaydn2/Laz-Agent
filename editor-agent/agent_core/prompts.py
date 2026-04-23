@@ -27,6 +27,8 @@ def build_prompt(
     workspace_summary: WorkspaceSummary,
     selected_files: list[FileContext],
     user_input: str | None,
+    changed_files: list[str] | None = None,
+    diff_text: str | None = None,
 ) -> PromptBundle:
     header = [
         f"MODE: {mode.value}",
@@ -43,6 +45,10 @@ def build_prompt(
 
     if user_input:
         header.append(f"USER_REQUEST: {user_input}")
+    if changed_files:
+        header.append(f"CHANGED_FILES: {changed_files}")
+    if diff_text:
+        header.append(f"DIFF_PROVIDED: yes")
 
     context_blocks: list[str] = []
     for file_context in selected_files:
@@ -58,8 +64,11 @@ def build_prompt(
             ).strip()
         )
 
-    task_instruction = _task_instruction(mode, user_input)
-    user_prompt = "\n\n".join(["\n".join(header), task_instruction, *context_blocks])
+    prompt_parts = ["\n".join(header), _task_instruction(mode, user_input)]
+    if diff_text:
+        prompt_parts.append(f"DIFF:\n{diff_text}")
+    prompt_parts.extend(context_blocks)
+    user_prompt = "\n\n".join(prompt_parts)
     return PromptBundle(system_prompt=SYSTEM_PROMPT, user_prompt=user_prompt)
 
 
@@ -110,6 +119,30 @@ def _task_instruction(mode: AgentMode, user_input: str | None) -> str:
             "For AFFECTED_FILES, list one repository-relative path per bullet.\n"
             "For PROPOSED_CHANGES, include the target file path at the start of each bullet when possible.\n"
             f"REQUEST: {user_input}"
+        )
+    if mode == AgentMode.REVIEW:
+        return (
+            "OUTPUT_FORMAT_JSON:\n"
+            "{\n"
+            '  "summary": "...",\n'
+            '  "findings": [\n'
+            "    {\n"
+            '      "title": "...",\n'
+            '      "severity": "low|medium|high",\n'
+            '      "file": "...",\n'
+            '      "evidence": "...",\n'
+            '      "issue": "...",\n'
+            '      "suggested_fix": "..."\n'
+            "    }\n"
+            "  ],\n"
+            '  "risks": "...",\n'
+            '  "next_steps": "..."\n'
+            "}\n\n"
+            "TASK: Act as a stable code review engine. Prefer fewer high-confidence findings over many weak findings. "
+            "If a possible issue is uncertain, omit it. Base findings on the provided files and diff only.\n"
+            "If a diff is provided, review the diff first. If changed files are provided, focus on those files. "
+            "If neither is provided, perform a general repository review.\n"
+            f"REVIEW_REQUEST: {user_input or 'Review the provided code context.'}"
         )
     return (
         "OUTPUT_HEADINGS:\n"
