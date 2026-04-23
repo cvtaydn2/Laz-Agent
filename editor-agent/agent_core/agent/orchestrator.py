@@ -61,27 +61,38 @@ class AgentOrchestrator:
         diff_text: str | None = None,
     ) -> SessionRecord:
         self.logger.info("Starting run: mode=%s workspace=%s", mode.value, workspace_path)
-
-        scan_results, workspace_summary = self.scanner.scan(workspace_path)
-        ranked_files = self.ranker.rank(
-            workspace_path,
-            scan_results,
-            mode,
-            user_input,
-            preferred_files=changed_files,
+        use_workspace = self._should_use_workspace(
+            mode=mode,
+            user_input=user_input,
+            changed_files=changed_files,
+            diff_text=diff_text,
         )
-        selected_context, reader_notes = self.reader.read_ranked_files(workspace_path, ranked_files)
-        workspace_summary.notes.extend(reader_notes)
-        workspace_summary.preferred_files = changed_files or []
+        if use_workspace:
+            scan_results, workspace_summary = self.scanner.scan(workspace_path)
+            ranked_files = self.ranker.rank(
+                workspace_path,
+                scan_results,
+                mode,
+                user_input,
+                preferred_files=changed_files,
+            )
+            selected_context, reader_notes = self.reader.read_ranked_files(workspace_path, ranked_files)
+            workspace_summary.notes.extend(reader_notes)
+            workspace_summary.preferred_files = changed_files or []
+        else:
+            ranked_files = []
+            selected_context = []
+            workspace_summary = self._build_empty_workspace_summary(workspace_path, changed_files)
         context_char_count = sum(len(item.content) for item in selected_context)
         self.logger.info(
-            "Workspace context selected: workspace=%s mode=%s backend_model=%s files=%s context_chars=%s preferred_files=%s",
+            "Workspace context selected: workspace=%s mode=%s backend_model=%s files=%s context_chars=%s preferred_files=%s workspace_used=%s",
             workspace_path,
             mode.value,
             self.settings.nvidia_model,
             len(selected_context),
             context_char_count,
             len(changed_files or []),
+            use_workspace,
         )
 
         prompt_bundle = build_prompt(
@@ -185,3 +196,61 @@ class AgentOrchestrator:
             context_char_count,
         )
         return session
+
+    def _should_use_workspace(
+        self,
+        *,
+        mode: AgentMode,
+        user_input: str | None,
+        changed_files: list[str] | None,
+        diff_text: str | None,
+    ) -> bool:
+        if changed_files or diff_text:
+            return True
+        if mode in {AgentMode.ANALYZE, AgentMode.SUGGEST, AgentMode.PATCH_PREVIEW, AgentMode.APPLY, AgentMode.REVIEW}:
+            return True
+        text = (user_input or "").strip().lower()
+        if not text:
+            return False
+        repo_keywords = {
+            "project",
+            "repo",
+            "repository",
+            "workspace",
+            "file",
+            "files",
+            "class",
+            "function",
+            "module",
+            "bug",
+            "error",
+            "readme",
+            "requirements",
+            "config",
+            "setting",
+            "code",
+            "review",
+            "implement",
+            "neden",
+            "nasıl",
+            "çalışıyor",
+        }
+        return any(keyword in text for keyword in repo_keywords)
+
+    def _build_empty_workspace_summary(
+        self,
+        workspace_path: Path,
+        changed_files: list[str] | None,
+    ):
+        from agent_core.models import WorkspaceSummary
+
+        return WorkspaceSummary(
+            root_path=str(workspace_path.resolve()),
+            total_files_scanned=0,
+            included_files=0,
+            skipped_files=0,
+            top_extensions={},
+            sampled_files=[],
+            notes=["Workspace context intentionally skipped for a general request."],
+            preferred_files=changed_files or [],
+        )

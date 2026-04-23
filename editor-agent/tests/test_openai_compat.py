@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 
+from agent_core.agent.orchestrator import AgentOrchestrator
 from agent_core.agent.response_parser import ResponseParser
+from agent_core.config import Settings
 from agent_core.server.openai_adapter import (
     extract_changed_files,
     extract_request_mode,
@@ -102,6 +104,31 @@ class OpenAICompatibilityTests(unittest.TestCase):
         content = json_review_text(session)
         self.assertIn('"summary"', content)
         self.assertIn('"findings"', content)
+
+    def test_generic_ask_can_skip_workspace_context(self) -> None:
+        settings = Settings.model_validate(
+            {
+                "NVIDIA_API_KEY": "test-key",
+                "NVIDIA_MODEL": "moonshotai/kimi-k2-instruct",
+            }
+        )
+        orchestrator = AgentOrchestrator(settings)
+        self.assertFalse(
+            orchestrator._should_use_workspace(
+                mode=AgentMode.ASK,
+                user_input="Sadece selam yaz.",
+                changed_files=None,
+                diff_text=None,
+            )
+        )
+        self.assertTrue(
+            orchestrator._should_use_workspace(
+                mode=AgentMode.ASK,
+                user_input="What does this project do?",
+                changed_files=None,
+                diff_text=None,
+            )
+        )
 
 
 if __name__ == "__main__":

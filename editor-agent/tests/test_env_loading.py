@@ -84,6 +84,8 @@ class EnvironmentLoadingTests(unittest.TestCase):
                 os.chdir(previous_cwd)
 
         self.assertEqual(settings.nvidia_model, "moonshotai/kimi-k2-instruct")
+        self.assertEqual(settings.timeout_seconds, 12.0)
+        self.assertEqual(settings.max_completion_tokens, 300)
 
     def test_model_override_still_works(self) -> None:
         test_dir = self.temp_root / "override-model"

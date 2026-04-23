@@ -37,7 +37,7 @@ class NvidiaClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.logger = configure_logger(settings.logs_dir / "editor-agent.log")
-        self.max_attempts = 3
+        self.max_attempts = 1
         self.max_backoff_seconds = 3.0
 
     def chat(

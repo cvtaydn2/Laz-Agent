@@ -135,12 +135,12 @@ Default backend configuration:
 
 - `NVIDIA_MODEL=moonshotai/kimi-k2-instruct`
 - `AGENT_TEMPERATURE=0.1`
-- `AGENT_TIMEOUT_SECONDS=25`
+- `AGENT_TIMEOUT_SECONDS=12`
 - `AGENT_MAX_FILE_BYTES=120000`
 - `AGENT_MAX_CHARS_PER_FILE=2500`
 - `AGENT_MAX_CONTEXT_CHARS=12000`
 - `AGENT_TOP_K_FILES=5`
-- `AGENT_MAX_COMPLETION_TOKENS=1000`
+- `AGENT_MAX_COMPLETION_TOKENS=300`
 
 These remain configurable via environment variables.
 
@@ -303,9 +303,10 @@ Current behavior:
 
 - bounded request timeout
 - explicit connect/read/write/pool timeouts
-- capped retry attempts
+- single-attempt backend requests for faster failure
 - capped backoff between retries
 - safe fallback response when the NVIDIA backend times out
+- general `ask` requests can skip workspace scanning when the prompt does not appear repo-aware
 
 If inference times out, the response remains OpenAI-compatible and the assistant message contains:
 
@@ -325,12 +326,12 @@ If responses are slow:
 - `NVIDIA_BASE_URL`: defaults to `https://integrate.api.nvidia.com/v1`
 - `NVIDIA_MODEL`: defaults to `moonshotai/kimi-k2-instruct`
 - `AGENT_TEMPERATURE`: defaults to `0.1`
-- `AGENT_TIMEOUT_SECONDS`: defaults to `25`
+- `AGENT_TIMEOUT_SECONDS`: defaults to `12`
 - `AGENT_MAX_FILE_BYTES`: defaults to `120000`
 - `AGENT_MAX_CHARS_PER_FILE`: defaults to `2500`
 - `AGENT_MAX_CONTEXT_CHARS`: defaults to `12000`
 - `AGENT_TOP_K_FILES`: defaults to `5`
-- `AGENT_MAX_COMPLETION_TOKENS`: defaults to `1000`
+- `AGENT_MAX_COMPLETION_TOKENS`: defaults to `300`
 - `AGENT_SERVER_HOST`: defaults to `127.0.0.1`
 - `AGENT_SERVER_PORT`: defaults to `8000`
 

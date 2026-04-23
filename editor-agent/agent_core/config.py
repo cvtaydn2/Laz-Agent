@@ -48,12 +48,12 @@ class Settings(BaseModel):
         alias="NVIDIA_MODEL",
     )
     temperature: float = Field(default=0.1, alias="AGENT_TEMPERATURE")
-    timeout_seconds: float = Field(default=25.0, alias="AGENT_TIMEOUT_SECONDS")
+    timeout_seconds: float = Field(default=12.0, alias="AGENT_TIMEOUT_SECONDS")
     max_file_bytes: int = Field(default=120000, alias="AGENT_MAX_FILE_BYTES")
     max_chars_per_file: int = Field(default=2500, alias="AGENT_MAX_CHARS_PER_FILE")
     max_context_chars: int = Field(default=12000, alias="AGENT_MAX_CONTEXT_CHARS")
     top_k_files: int = Field(default=5, alias="AGENT_TOP_K_FILES")
-    max_completion_tokens: int = Field(default=1000, alias="AGENT_MAX_COMPLETION_TOKENS")
+    max_completion_tokens: int = Field(default=300, alias="AGENT_MAX_COMPLETION_TOKENS")
     server_host: str = Field(default="127.0.0.1", alias="AGENT_SERVER_HOST")
     server_port: int = Field(default=8000, alias="AGENT_SERVER_PORT")
 
@@ -66,12 +66,12 @@ class Settings(BaseModel):
                 "NVIDIA_BASE_URL": os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
                 "NVIDIA_MODEL": os.getenv("NVIDIA_MODEL", "moonshotai/kimi-k2-instruct"),
                 "AGENT_TEMPERATURE": float(os.getenv("AGENT_TEMPERATURE", "0.1")),
-                "AGENT_TIMEOUT_SECONDS": float(os.getenv("AGENT_TIMEOUT_SECONDS", "25")),
+                "AGENT_TIMEOUT_SECONDS": float(os.getenv("AGENT_TIMEOUT_SECONDS", "12")),
                 "AGENT_MAX_FILE_BYTES": int(os.getenv("AGENT_MAX_FILE_BYTES", "120000")),
                 "AGENT_MAX_CHARS_PER_FILE": int(os.getenv("AGENT_MAX_CHARS_PER_FILE", "2500")),
                 "AGENT_MAX_CONTEXT_CHARS": int(os.getenv("AGENT_MAX_CONTEXT_CHARS", "12000")),
                 "AGENT_TOP_K_FILES": int(os.getenv("AGENT_TOP_K_FILES", "5")),
-                "AGENT_MAX_COMPLETION_TOKENS": int(os.getenv("AGENT_MAX_COMPLETION_TOKENS", "1000")),
+                "AGENT_MAX_COMPLETION_TOKENS": int(os.getenv("AGENT_MAX_COMPLETION_TOKENS", "300")),
                 "AGENT_SERVER_HOST": os.getenv("AGENT_SERVER_HOST", "127.0.0.1"),
                 "AGENT_SERVER_PORT": int(os.getenv("AGENT_SERVER_PORT", "8000")),
             }
