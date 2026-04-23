@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from agent_core.agent.review_verifier import ReviewVerifier
@@ -59,8 +60,26 @@ class AgentOrchestrator:
         max_tokens_override: int | None = None,
         changed_files: list[str] | None = None,
         diff_text: str | None = None,
+        preferred_files: list[str] | None = None,
     ) -> SessionRecord:
         mode = self._normalize_mode(mode)
+        force_workspace_use = False
+
+        # Dynamic workspace override: Check if user_input contains an absolute path
+        if user_input:
+            # Match Windows paths (C:\...) or Linux absolute paths (/...)
+            path_match = re.search(r'([a-zA-Z]:\\[^ :*?"<>|\r\n]+|/[^ :*?"<>|\r\n]+)', user_input)
+            if path_match:
+                detected_path = Path(path_match.group(1).strip()).resolve()
+                if detected_path.exists() and detected_path.is_dir():
+                    self.logger.info("Dynamic workspace override detected: %s", detected_path)
+                    workspace_path = detected_path
+                    # Force workspace scanning when a specific path is provided
+                    force_workspace_use = True
+                else:
+                    force_workspace_use = False
+            else:
+                force_workspace_use = False
         self.logger.info("Starting run: mode=%s workspace=%s", mode.value, workspace_path)
         trivial_response = self._build_trivial_ask_response(mode, workspace_path, user_input)
         if trivial_response is not None:
@@ -73,17 +92,14 @@ class AgentOrchestrator:
                 self.settings.nvidia_model,
             )
             return trivial_response
-        use_workspace = self._should_use_workspace(
+
+        use_workspace = force_workspace_use or self._should_use_workspace(
             mode=mode,
             user_input=user_input,
             changed_files=changed_files,
             diff_text=diff_text,
         )
-        print("DEBUG normalized mode:", mode)
-        print("DEBUG should_use_workspace:", use_workspace)
-        print("DEBUG user_input:", user_input)
-        print("DEBUG changed_files:", changed_files)
-        print("DEBUG diff_text_present:", bool(diff_text))
+
         if use_workspace:
             scan_results, workspace_summary = self.scanner.scan(workspace_path)
             ranked_files = self.ranker.rank(
@@ -91,11 +107,11 @@ class AgentOrchestrator:
                 scan_results,
                 mode,
                 user_input,
-                preferred_files=changed_files,
+                preferred_files=preferred_files or changed_files,
             )
             selected_context, reader_notes = self.reader.read_ranked_files(workspace_path, ranked_files)
             workspace_summary.notes.extend(reader_notes)
-            workspace_summary.preferred_files = changed_files or []
+            workspace_summary.preferred_files = preferred_files or changed_files or []
         else:
             ranked_files = []
             selected_context = []
@@ -108,7 +124,7 @@ class AgentOrchestrator:
             self.settings.nvidia_model,
             len(selected_context),
             context_char_count,
-            len(changed_files or []),
+            len(preferred_files or changed_files or []),
             use_workspace,
         )
 
@@ -124,10 +140,8 @@ class AgentOrchestrator:
             ChatMessage(role="system", content=prompt_bundle.system_prompt),
             ChatMessage(role="user", content=prompt_bundle.user_prompt),
         ]
-        print("DEBUG system_prompt_len:", len(prompt_bundle.system_prompt))
-        print("DEBUG user_prompt_len:", len(prompt_bundle.user_prompt))
-        print("DEBUG max_completion_tokens:", self.settings.max_completion_tokens)
-        print("DEBUG timeout_seconds:", self.settings.timeout_seconds)
+        self.logger.debug("System prompt length: %d", len(prompt_bundle.system_prompt))
+        self.logger.debug("User prompt length: %d", len(prompt_bundle.user_prompt))
         try:
             model_response = self.client.chat(
                 messages,
@@ -232,44 +246,9 @@ class AgentOrchestrator:
         workspace_path: Path,
         user_input: str | None,
     ) -> SessionRecord | None:
-        if mode != AgentMode.ASK:
-            return None
-        normalized = (user_input or "").strip().lower()
-        trivial_responses = {
-            "selam": "Selam.",
-            "selam yaz": "Selam.",
-            "merhaba": "Merhaba.",
-            "merhaba yaz": "Merhaba.",
-            "hi": "Hi.",
-            "hello": "Hello.",
-            "hey": "Hey.",
-        }
-        response_text = trivial_responses.get(normalized)
-        if response_text is None:
-            return None
-
-        session_id = build_session_id(mode)
-        created_at = utc_now()
-        workspace_summary = self._build_empty_workspace_summary(workspace_path, None)
-        parsed = ParsedAnswer(
-            summary=response_text,
-            raw_text=response_text,
-            parse_strategy="local_fast_path",
-        )
-        return SessionRecord(
-            session_id=session_id,
-            created_at=created_at,
-            mode=mode,
-            workspace_path=str(workspace_path.resolve()),
-            prompt=user_input or "",
-            user_input=user_input,
-            workspace_summary=workspace_summary,
-            ranked_files=[],
-            selected_context=[],
-            raw_response=response_text,
-            parsed_response=parsed,
-            confirmed=False,
-        )
+        # We now let the backend model handle all greetings and trivial queries
+        # for a more natural interaction.
+        return None
 
     def _should_use_workspace(
         self,
@@ -308,6 +287,13 @@ class AgentOrchestrator:
             "neden",
             "nasıl",
             "çalışıyor",
+            "oku",
+            "anla",
+            "incele",
+            "tara",
+            "tarat",
+            "proje",
+            "yapısı",
         }
         return any(keyword in text for keyword in repo_keywords)
 

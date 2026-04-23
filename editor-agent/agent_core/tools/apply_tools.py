@@ -95,19 +95,32 @@ class ApplyEngine:
             raise ApplyError(f"Refusing to write outside workspace: {relative_path}") from exc
         return candidate
 
+    ALLOWED_EXTENSIONS = {
+        ".py", ".js", ".ts", ".tsx", ".jsx", ".json", ".md",
+        ".txt", ".yml", ".yaml", ".html", ".css", ".env.example"
+    }
+
     def _preflight_validate(
         self,
         workspace_path: Path,
         operations: list[ProposedFileOperation],
     ) -> str | None:
         for operation in operations:
-            if operation.action != "update":
+            if operation.action not in {"update", "create"}:
                 return f"Unsupported apply action for safe mode: {operation.action}"
+            
             target_path = self._resolve_target_path(workspace_path, operation.path)
-            if not target_path.exists():
+            
+            # Security: Check file extension
+            if target_path.suffix.lower() not in self.ALLOWED_EXTENSIONS:
+                return f"Refusing to modify/create file with restricted extension: {operation.path}"
+
+            # If it's an update, the file MUST exist. 
+            # If it's a create, it can be new.
+            if operation.action == "update" and not target_path.exists():
                 return (
-                    "Safe apply mode only updates existing files. "
-                    f"Missing target: {operation.path}"
+                    "Update operation requested for a non-existent file. "
+                    f"Target: {operation.path}"
                 )
         return None
 
@@ -115,8 +128,9 @@ class ApplyEngine:
         backup_root = self.settings.backups_dir / session_id
         relative = target_path.resolve().relative_to(workspace_path.resolve())
         backup_path = backup_root / relative
-        backup_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(target_path, backup_path)
+        if target_path.exists():
+            backup_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(target_path, backup_path)
         return backup_path
 
     def _write_file(self, target_path: Path, content: str) -> None:

@@ -95,22 +95,45 @@ class ResponseParser:
         )
 
     def _parse_file_operations(self, text: str) -> list[ProposedFileOperation]:
-        pattern = re.compile(
+        operations: list[ProposedFileOperation] = []
+        
+        # 1. Original BEGIN_FILE / END_FILE format (Legacy/Strict)
+        strict_pattern = re.compile(
             r"BEGIN_FILE\s+PATH:\s*(?P<path>[^\r\n]+)\s+ACTION:\s*(?P<action>[^\r\n]+)\s+CONTENT:\s*(?P<content>.*?)\s+END_FILE",
             re.DOTALL,
         )
-        operations: list[ProposedFileOperation] = []
-        for match in pattern.finditer(text):
-            path = match.group("path").strip().strip("`")
+        for match in strict_pattern.finditer(text):
+            path = match.group("path").strip().strip("`").strip("'")
             action = match.group("action").strip().lower()
             content = match.group("content")
-            operations.append(
-                ProposedFileOperation(
-                    path=path,
-                    action=action,
-                    content=content.rstrip("\r\n"),
+            operations.append(ProposedFileOperation(path=path, action=action, content=content.rstrip("\r\n")))
+
+        # 2. Markdown Code Block Detection (Smart/Natural)
+        # Matches: ```language (optional) [Path hint in comment or heading] ... ```
+        # We look for "# File: path/to/file" or "// File: path/to/file" at the start of blocks
+        md_pattern = re.compile(r"```[a-zA-Z]*\s+(?P<content>.*?)```", re.DOTALL)
+        for match in md_pattern.finditer(text):
+            content = match.group("content")
+            # Look for path hint in the first 3 lines of the block
+            path_hint = None
+            first_lines = content.splitlines()[:3]
+            for line in first_lines:
+                # Matches: # File: path/to/file or // File: path/to/file or Path: path/to/file
+                path_match = re.search(r"(?:#|//|Path:)\s*(?:File:)?\s*([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9]{1,5})", line, re.IGNORECASE)
+                if path_match:
+                    path_hint = path_match.group(1).strip()
+                    break
+            
+            if path_hint and not any(op.path == path_hint for op in operations):
+                # If we found a path hint and haven't already added this file via strict pattern
+                operations.append(
+                    ProposedFileOperation(
+                        path=path_hint,
+                        action="update", # Default to update for MD blocks
+                        content=content.strip("\r\n")
+                    )
                 )
-            )
+        
         return operations
 
     def _extract_json_candidate(self, text: str) -> str | None:

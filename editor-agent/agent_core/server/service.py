@@ -87,10 +87,12 @@ def run_agent(
     mode: AgentMode,
     workspace: str,
     user_input: str | None,
+    *,
     temperature_override: float | None = None,
     max_tokens_override: int | None = None,
     changed_files: list[str] | None = None,
     diff_text: str | None = None,
+    preferred_files: list[str] | None = None,
 ) -> SessionRecord:
     logger = build_server_logger()
     orchestrator = build_orchestrator()
@@ -104,6 +106,7 @@ def run_agent(
             max_tokens_override=max_tokens_override,
             changed_files=changed_files,
             diff_text=diff_text,
+            preferred_files=preferred_files,
         )
     except NvidiaTimeoutError as exc:
         logger.warning(

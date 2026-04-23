@@ -23,52 +23,54 @@ class WorkspaceRanker:
             for item in (preferred_files or [])
             if item and item.strip()
         }
+        # Filter out common noise words to focus on real intent
+        stop_words = {"the", "and", "for", "with", "from", "this", "that", "how", "what", "why", "can", "you", "den", "dan", "bir", "icin", "nasıl", "neden", "proje", "dosya"}
         query_terms = {
             part.lower()
-            for part in (user_input or "").replace('"', " ").replace("'", " ").split()
-            if len(part) >= 3
+            for part in (user_input or "").replace('"', " ").replace("'", " ").replace("/", " ").replace("\\", " ").split()
+            if len(part) >= 3 and part.lower() not in stop_words
         }
+        
         ranked: list[RankedFile] = []
 
         for file_item in files:
             score = 0.0
             reasons: list[str] = []
-            relative_lower = file_item.relative_path.lower()
+            relative_lower = file_item.relative_path.lower().replace("\\", "/")
             file_name_lower = Path(file_item.relative_path).name.lower()
+            parts = relative_lower.split("/")
 
+            # 1. Structural Significance
             if "readme" in file_name_lower:
-                score += 8
-                reasons.append("README files usually describe the project.")
-            if file_name_lower in {"pyproject.toml", "package.json", "requirements.txt", "setup.py"}:
-                score += 7
+                score += 15  # Increased priority for project maps
+                reasons.append("Project overview (README).")
+            if file_name_lower in {"package.json", "pyproject.toml", "requirements.txt", "go.mod", "tsconfig.json"}:
+                score += 12
                 reasons.append("Core project configuration.")
-            if "requirements" in file_name_lower or "package.json" in file_name_lower:
-                score += 7
-                reasons.append("Dependency or package manifest.")
-            if "main" in file_name_lower or "app" in file_name_lower:
-                score += 5
-                reasons.append("Potential entry point.")
-            if file_name_lower in {"__main__.py", "manage.py"}:
-                score += 6
-                reasons.append("Known Python entry point.")
-            if file_item.extension in {".py", ".ts", ".tsx", ".js", ".jsx"}:
-                score += 3
-                reasons.append("Source code file.")
-            if file_item.extension in {".md", ".json", ".yml", ".yaml"}:
-                score += 2
-                reasons.append("Configuration or documentation file.")
-            if len(Path(file_item.relative_path).parts) == 1:
-                score += 2
-                reasons.append("Top-level project file.")
-
+            if "config" in file_name_lower or "settings" in file_name_lower:
+                score += 8
+                reasons.append("Configuration file.")
+            
+            # 2. Contextual Term Matching (Smart Search)
             matched_terms = [term for term in query_terms if term in relative_lower]
             if matched_terms:
-                score += 2 * len(matched_terms)
-                reasons.append(f"Matches request terms: {', '.join(sorted(matched_terms))}.")
+                # Higher weight for matching the actual filename vs directory name
+                for term in matched_terms:
+                    if term in file_name_lower:
+                        score += 10
+                    else:
+                        score += 5
+                reasons.append(f"Intent match: {', '.join(sorted(matched_terms))}.")
 
+            # 3. Directory Context (e.g., if asking about 'api', boost 'src/api/')
+            if any(term in parts for term in query_terms):
+                score += 15
+                reasons.append("High directory relevance.")
+
+            # 4. Explicit Focus (Continue context or user-provided files)
             if relative_lower in normalized_preferred:
-                score += 50
-                reasons.append("Explicitly requested file focus.")
+                score += 100 # Maximum priority
+                reasons.append("Currently active/requested file.")
 
             if mode == AgentMode.SUGGEST and any(
                 marker in relative_lower

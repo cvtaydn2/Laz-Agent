@@ -23,6 +23,7 @@ from agent_core.server.openai_adapter import (
     session_to_plain_text,
     extract_user_message,
     validate_openai_mode,
+    extract_preferred_files,
 )
 from agent_core.server.openai_schemas import OpenAIChatCompletionRequest, OpenAIModelsResponse
 from agent_core.server.schemas import (
@@ -134,6 +135,7 @@ def chat_completions(request: OpenAIChatCompletionRequest):
             max_tokens_override=request.max_tokens,
             changed_files=extract_changed_files(request),
             diff_text=extract_diff(request),
+            preferred_files=extract_preferred_files(request),
         )
         if request.stream:
             content = session_to_plain_text(session)

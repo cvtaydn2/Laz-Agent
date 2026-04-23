@@ -40,13 +40,13 @@ def build_openai_models_response() -> OpenAIModelsResponse:
 
 
 def extract_user_message(messages: list[OpenAIMessage]) -> str | None:
-    for message in reversed(messages):
-        if message.role != "user":
-            continue
+    # Combine last few messages to capture full context if selection is separated
+    parts: list[str] = []
+    for message in messages[-3:]: # Look at last 3 messages for context
         text = _content_to_text(message.content)
         if text:
-            return text
-    return None
+            parts.append(text)
+    return "\n\n".join(parts) if parts else None
 
 
 def extract_request_workspace(request: OpenAIChatCompletionRequest) -> str | None:
@@ -108,6 +108,32 @@ def extract_diff(request: OpenAIChatCompletionRequest) -> str | None:
     if isinstance(request.diff, str) and request.diff.strip():
         return request.diff.strip()
     return None
+
+
+def extract_preferred_files(request: OpenAIChatCompletionRequest) -> list[str]:
+    preferred: set[str] = set()
+    
+    # 1. Check explicit metadata
+    for container in (request.extra_body, request.metadata):
+        if isinstance(container, dict):
+            val = container.get("preferred_files") or container.get("active_files")
+            if isinstance(val, list):
+                for f in val:
+                    preferred.add(str(f).replace("\\", "/").strip())
+
+    # 2. Heuristic: Scan message history for potential file paths
+    import re
+    # Match strings that look like paths: word/word.ext or word.ext
+    path_pattern = re.compile(r'([a-zA-Z0-9_\-\./]+\.[a-zA-Z0-9]{1,5})')
+    
+    for msg in request.messages[-5:]: # Scan last 5 messages
+        text = _content_to_text(msg.content)
+        for match in path_pattern.findall(text):
+            # Basic validation to avoid matching plain words
+            if "." in match and "/" in match or len(match.split(".")[-1]) in {2, 3, 4}:
+                preferred.add(match.replace("\\", "/").strip())
+
+    return sorted(list(preferred))
 
 
 def build_openai_response(

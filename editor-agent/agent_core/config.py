@@ -44,8 +44,12 @@ class Settings(BaseModel):
         alias="NVIDIA_BASE_URL",
     )
     nvidia_model: str = Field(
-        default="moonshotai/kimi-k2-instruct",
+        default="minimaxai/minimax-m2.7",
         alias="NVIDIA_MODEL",
+    )
+    nvidia_fallback_model: str = Field(
+        default="moonshotai/kimi-k2-instruct",
+        alias="NVIDIA_FALLBACK_MODEL",
     )
     temperature: float = Field(default=0.1, alias="AGENT_TEMPERATURE")
     timeout_seconds: float = Field(default=18.0, alias="AGENT_TIMEOUT_SECONDS")
@@ -65,7 +69,8 @@ class Settings(BaseModel):
             {
                 "NVIDIA_API_KEY": os.getenv("NVIDIA_API_KEY", ""),
                 "NVIDIA_BASE_URL": os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"),
-                "NVIDIA_MODEL": os.getenv("NVIDIA_MODEL", "moonshotai/kimi-k2-instruct"),
+                "NVIDIA_MODEL": os.getenv("NVIDIA_MODEL", "minimaxai/minimax-m2.7"),
+                "NVIDIA_FALLBACK_MODEL": os.getenv("NVIDIA_FALLBACK_MODEL", "moonshotai/kimi-k2-instruct"),
                 "AGENT_TEMPERATURE": float(os.getenv("AGENT_TEMPERATURE", "0.1")),
                 "AGENT_TIMEOUT_SECONDS": float(os.getenv("AGENT_TIMEOUT_SECONDS", "18")),
                 "AGENT_MAX_FILE_BYTES": int(os.getenv("AGENT_MAX_FILE_BYTES", "120000")),
