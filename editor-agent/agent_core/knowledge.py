@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from pathlib import Path
@@ -10,6 +11,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
+
 class KnowledgeEntry(BaseModel):
     pattern: str
     solution_summary: str
@@ -17,11 +19,16 @@ class KnowledgeEntry(BaseModel):
     last_applied: datetime = Field(default_factory=datetime.now)
     files_involved: List[str] = Field(default_factory=list)
 
+
 class KnowledgeBase(BaseModel):
     entries: Dict[str, KnowledgeEntry] = Field(default_factory=dict)
-    
+
     @classmethod
     def load(cls, path: Path) -> "KnowledgeBase":
+        """Synchronous load. For use in non-async contexts only.
+
+        In async contexts prefer ``async_load()`` to avoid blocking the event loop.
+        """
         if not path.exists():
             return cls()
         try:
@@ -30,6 +37,20 @@ class KnowledgeBase(BaseModel):
             return cls.model_validate(data)
         except (FileNotFoundError, json.JSONDecodeError, ValidationError) as exc:
             logger.warning("Failed to load knowledge base from %s: %s", path, exc)
+            return cls()
+
+    @classmethod
+    async def async_load(cls, path: Path) -> "KnowledgeBase":
+        """Async load — runs file I/O in a thread so the event loop is never blocked.
+
+        Returns an empty KnowledgeBase on any error (missing file, invalid JSON,
+        validation failure, permission error) and logs a WARNING.
+        """
+        try:
+            data = await asyncio.to_thread(_read_json_file, path)
+            return cls.model_validate(data)
+        except (FileNotFoundError, json.JSONDecodeError, ValidationError, OSError, ValueError) as exc:
+            logger.warning("Failed to async_load knowledge base from %s: %s", path, exc)
             return cls()
 
     def save(self, path: Path):
@@ -60,3 +81,9 @@ class KnowledgeBase(BaseModel):
             if q in entry.pattern.lower() or q in entry.solution_summary.lower():
                 results.append(entry)
         return sorted(results, key=lambda x: x.success_count, reverse=True)
+
+
+def _read_json_file(path: Path) -> dict:
+    """Thread-safe synchronous helper used by async_load."""
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)

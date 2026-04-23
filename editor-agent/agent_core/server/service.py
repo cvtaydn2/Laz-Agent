@@ -15,17 +15,29 @@ from agent_core.tools.file_tools import resolve_workspace
 _orchestrator: AgentOrchestrator | None = None
 
 
-def get_orchestrator() -> AgentOrchestrator:
-    """Return the shared orchestrator instance, creating it on first call."""
+async def get_orchestrator() -> AgentOrchestrator:
+    """Return the shared orchestrator instance, creating it on first call.
+
+    Uses AgentOrchestrator.from_settings() so KnowledgeBase is loaded
+    asynchronously without blocking the event loop.
+    """
     global _orchestrator
     if _orchestrator is None:
-        _orchestrator = AgentOrchestrator(settings=Settings.load())
+        _orchestrator = await AgentOrchestrator.from_settings(settings=Settings.load())
     return _orchestrator
 
 
 def build_orchestrator() -> AgentOrchestrator:
-    """Alias kept for backward compatibility."""
-    return get_orchestrator()
+    """Synchronous alias kept for backward compatibility (non-async callers).
+
+    Falls back to the legacy AgentOrchestrator(settings) path which uses
+    the synchronous KnowledgeBase.load().  Prefer get_orchestrator() in
+    async contexts.
+    """
+    global _orchestrator
+    if _orchestrator is None:
+        _orchestrator = AgentOrchestrator(Settings.load())
+    return _orchestrator
 
 
 def resolve_workspace_or_400(workspace: str) -> Path:
@@ -106,7 +118,7 @@ async def run_agent(
     diff_text: str | None = None,
     preferred_files: list[str] | None = None,
 ) -> SessionRecord:
-    orchestrator = get_orchestrator()
+    orchestrator = await get_orchestrator()
     logger = orchestrator.logger
     workspace_path = resolve_workspace_or_400(workspace)
     try:
@@ -176,7 +188,7 @@ async def stream_agent(
 
     Each dict: {"content": str | None, "tool_calls": list, "finish_reason": str | None, "raw": dict}
     """
-    orchestrator = get_orchestrator()
+    orchestrator = await get_orchestrator()
     workspace_path = resolve_workspace_or_400(workspace)
     async for chunk in orchestrator.stream_run(
         mode=mode,

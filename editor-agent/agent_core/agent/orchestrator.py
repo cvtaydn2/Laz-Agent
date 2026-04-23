@@ -3,9 +3,11 @@ from __future__ import annotations
 import re
 import json
 import asyncio
+from dataclasses import dataclass, field
 from textwrap import dedent
-from typing import Any, Iterable, AsyncIterable
+from typing import Any, Iterable, AsyncIterable, Optional
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from agent_core.agent.review_verifier import ReviewVerifier
 from agent_core.agent.apply_mode import ApplyModePolicy
@@ -16,11 +18,13 @@ from agent_core.agent.suggester import SuggestionPolicy
 from agent_core.knowledge import KnowledgeBase
 from agent_core.config import Settings
 from agent_core.llm import get_llm_provider
+from agent_core.llm.provider import LLMProvider
 from agent_core.logger import configure_logger
 from agent_core.models import (
     ApplyLogRecord,
     AgentMode,
     ChatMessage,
+    FileContext,
     ModelResponse,
     ParsedAnswer,
     PatchProposal,
@@ -40,26 +44,160 @@ from agent_core.workspace.scanner import WorkspaceScanner
 from agent_core.tools.command_tools import execute_command
 
 
+# ---------------------------------------------------------------------------
+# Protocols
+# ---------------------------------------------------------------------------
+
+@runtime_checkable
+class Policy(Protocol):
+    """Structural protocol for mode-specific ParsedAnswer transformations."""
+    def apply(self, parsed: ParsedAnswer) -> ParsedAnswer:
+        ...
+
+
+class ReviewVerifierProtocol(Protocol):
+    """Structural protocol for review verification."""
+    def verify(
+        self,
+        workspace_path: Path,
+        parsed: ParsedAnswer,
+        selected_context: list[FileContext],
+    ) -> ParsedAnswer:
+        ...
+
+
+# ---------------------------------------------------------------------------
+# Dependency container
+# ---------------------------------------------------------------------------
+
+@dataclass
+class OrchestratorDependencies:
+    """All dependencies required by AgentOrchestrator, injectable for testing."""
+    scanner: WorkspaceScanner
+    ranker: WorkspaceRanker
+    reader: WorkspaceReader
+    llm_provider: LLMProvider
+    planner: AgentPlanner
+    response_parser: ResponseParser
+    suggestion_policy: Policy
+    patch_preview_policy: Policy
+    apply_policy: Policy
+    review_verifier: ReviewVerifierProtocol
+    session_writer: SessionWriter
+    patch_writer: PatchProposalWriter
+    apply_log_writer: ApplyLogWriter
+    apply_engine: ApplyEngine
+    knowledge_base: KnowledgeBase
+    settings: Optional[Settings] = field(default=None)
+
+
+def _build_deps_sync(settings: Settings) -> OrchestratorDependencies:
+    """Build all dependencies synchronously from Settings (legacy path)."""
+    return OrchestratorDependencies(
+        scanner=WorkspaceScanner(settings),
+        ranker=WorkspaceRanker(settings),
+        reader=WorkspaceReader(settings),
+        llm_provider=get_llm_provider(settings),
+        planner=AgentPlanner(),
+        response_parser=ResponseParser(),
+        suggestion_policy=SuggestionPolicy(),
+        patch_preview_policy=PatchPreviewPolicy(),
+        apply_policy=ApplyModePolicy(),
+        review_verifier=ReviewVerifier(settings),
+        session_writer=SessionWriter(settings),
+        patch_writer=PatchProposalWriter(settings),
+        apply_log_writer=ApplyLogWriter(settings),
+        apply_engine=ApplyEngine(settings),
+        knowledge_base=KnowledgeBase.load(settings.state_dir / "knowledge_base.json"),
+        settings=settings,
+    )
+
+
 class AgentOrchestrator:
-    def __init__(self, settings: Settings) -> None:
-        self.settings = settings
-        self.scanner = WorkspaceScanner(settings)
-        self.ranker = WorkspaceRanker(settings)
-        self.reader = WorkspaceReader(settings)
-        self.client = get_llm_provider(settings)
-        self.planner = AgentPlanner()
-        self.response_parser = ResponseParser()
-        self.suggestion_policy = SuggestionPolicy()
-        self.patch_preview_policy = PatchPreviewPolicy()
-        self.apply_policy = ApplyModePolicy()
-        self.review_verifier = ReviewVerifier(settings)
-        self.session_writer = SessionWriter(settings)
-        self.patch_writer = PatchProposalWriter(settings)
-        self.apply_log_writer = ApplyLogWriter(settings)
-        self.apply_engine = ApplyEngine(settings)
-        self.knowledge_base = KnowledgeBase.load(settings.state_dir / "knowledge_base.json")
-        self.logger = configure_logger(settings.logs_dir / "editor-agent.log")
+    def __init__(
+        self,
+        deps_or_settings: "OrchestratorDependencies | Settings | None" = None,
+        *,
+        deps: "OrchestratorDependencies | None" = None,
+    ) -> None:
+        # Resolve dependencies — supports three call patterns:
+        #   AgentOrchestrator(settings)          ← legacy, backward-compatible
+        #   AgentOrchestrator(deps_obj)          ← new preferred form
+        #   AgentOrchestrator(deps=mock_deps)    ← keyword, useful in tests
+        if isinstance(deps_or_settings, Settings):
+            resolved_deps = _build_deps_sync(deps_or_settings)
+        elif isinstance(deps_or_settings, OrchestratorDependencies):
+            resolved_deps = deps_or_settings
+        elif deps is not None:
+            resolved_deps = deps
+        else:
+            raise TypeError(
+                "AgentOrchestrator requires either an OrchestratorDependencies "
+                "instance or a Settings instance."
+            )
+
+        self.deps = resolved_deps
+
+        # Shortcut references — keeps existing method bodies unchanged
+        self.settings = resolved_deps.settings
+        self.scanner = resolved_deps.scanner
+        self.ranker = resolved_deps.ranker
+        self.reader = resolved_deps.reader
+        self.client = resolved_deps.llm_provider
+        self.planner = resolved_deps.planner
+        self.response_parser = resolved_deps.response_parser
+        self.suggestion_policy = resolved_deps.suggestion_policy
+        self.patch_preview_policy = resolved_deps.patch_preview_policy
+        self.apply_policy = resolved_deps.apply_policy
+        self.review_verifier = resolved_deps.review_verifier
+        self.session_writer = resolved_deps.session_writer
+        self.patch_writer = resolved_deps.patch_writer
+        self.apply_log_writer = resolved_deps.apply_log_writer
+        self.apply_engine = resolved_deps.apply_engine
+        self.knowledge_base = resolved_deps.knowledge_base
+
+        log_path = (
+            resolved_deps.settings.logs_dir / "editor-agent.log"
+            if resolved_deps.settings
+            else Path("editor-agent.log")
+        )
+        self.logger = configure_logger(log_path)
         self.logger.info("Orchestrator initialized with knowledge base.")
+
+    @property
+    def _model_name(self) -> str:
+        """Safe accessor for the backend model name — returns 'unknown' when settings is None."""
+        return self.settings.nvidia_model if self.settings else "unknown"
+
+    @classmethod
+    async def from_settings(cls, settings: Settings) -> "AgentOrchestrator":
+        """Async factory: builds all dependencies from Settings.
+
+        Uses KnowledgeBase.async_load() so the event loop is never blocked.
+        Prefer this over AgentOrchestrator(settings) in async contexts.
+        """
+        knowledge_base = await KnowledgeBase.async_load(
+            settings.state_dir / "knowledge_base.json"
+        )
+        resolved_deps = OrchestratorDependencies(
+            scanner=WorkspaceScanner(settings),
+            ranker=WorkspaceRanker(settings),
+            reader=WorkspaceReader(settings),
+            llm_provider=get_llm_provider(settings),
+            planner=AgentPlanner(),
+            response_parser=ResponseParser(),
+            suggestion_policy=SuggestionPolicy(),
+            patch_preview_policy=PatchPreviewPolicy(),
+            apply_policy=ApplyModePolicy(),
+            review_verifier=ReviewVerifier(settings),
+            session_writer=SessionWriter(settings),
+            patch_writer=PatchProposalWriter(settings),
+            apply_log_writer=ApplyLogWriter(settings),
+            apply_engine=ApplyEngine(settings),
+            knowledge_base=knowledge_base,
+            settings=settings,
+        )
+        return cls(resolved_deps)
 
     async def run(
         self,
@@ -99,7 +237,7 @@ class AgentOrchestrator:
                 mode.value,
                 workspace_path,
                 trivial_response.session_id,
-                self.settings.nvidia_model,
+                self._model_name,
             )
             return trivial_response
 
@@ -134,7 +272,7 @@ class AgentOrchestrator:
             "Workspace context selected: workspace=%s mode=%s backend_model=%s files=%s context_chars=%s preferred_files=%s workspace_used=%s",
             workspace_path,
             mode.value,
-            self.settings.nvidia_model,
+            self._model_name,
             len(selected_context),
             context_char_count,
             len(preferred_files or changed_files or []),
@@ -188,7 +326,7 @@ class AgentOrchestrator:
         else:
             comparison = None
             try:
-                self.logger.info("Sending request to LLM (model=%s)...", self.settings.nvidia_model)
+                self.logger.info("Sending request to LLM (model=%s)...", self._model_name)
                 model_response = await self.client.chat(
                     messages,
                     temperature_override=temperature_override,
@@ -200,7 +338,7 @@ class AgentOrchestrator:
                     "Backend inference failed: workspace=%s mode=%s backend_model=%s",
                     workspace_path,
                     mode.value,
-                    self.settings.nvidia_model,
+                    self._model_name,
                 )
                 raise
         if not parsed:
@@ -295,13 +433,14 @@ class AgentOrchestrator:
             comparison=comparison,
         )
         await self.session_writer.write(session)
-        self.knowledge_base.save(self.settings.state_dir / "knowledge_base.json")
+        if self.settings:
+            self.knowledge_base.save(self.settings.state_dir / "knowledge_base.json")
         self.logger.info(
             "Completed run: mode=%s workspace=%s session=%s backend_model=%s files=%s context_chars=%s status=success",
             mode.value,
             workspace_path,
             session.session_id,
-            self.settings.nvidia_model,
+            self._model_name,
             len(selected_context),
             context_char_count,
         )
@@ -439,7 +578,7 @@ class AgentOrchestrator:
             "Completed stream: mode=%s workspace=%s backend_model=%s",
             mode.value,
             workspace_path,
-            self.settings.nvidia_model,
+            self._model_name,
         )
 
     async def _prepare_prompt_bundle(
@@ -694,13 +833,17 @@ class AgentOrchestrator:
             messages, 
             temperature_override=temperature_override, 
             max_tokens_override=max_tokens_override,
-            model_override=self.settings.nvidia_model
+            model_override=self._model_name if self._model_name != "unknown" else None,
         )
         secondary_task = self.client.chat(
             messages,
             temperature_override=temperature_override,
             max_tokens_override=max_tokens_override,
-            model_override=self.settings.nvidia_fallback_model
+            model_override=(
+                self.settings.nvidia_fallback_model
+                if self.settings and self.settings.nvidia_fallback_model
+                else None
+            ),
         )
         
         primary_res, secondary_res = await asyncio.gather(primary_task, secondary_task)
