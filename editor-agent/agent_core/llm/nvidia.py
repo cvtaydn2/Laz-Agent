@@ -188,9 +188,10 @@ class NvidiaProvider(LLMProvider):
     def _resolve_temperature(self, temperature_override: float | str | None) -> float:
         try:
             val = float(temperature_override) if temperature_override is not None else self.settings.temperature
-            return min(max(val, 0.0), 0.2)
+            # Clamp to valid range [0.0, 2.0] without silently overriding the caller's intent
+            return min(max(val, 0.0), 2.0)
         except (TypeError, ValueError):
-            return 0.1
+            return self.settings.temperature
 
     def _resolve_max_tokens(self, max_tokens_override: int | None) -> int:
         val = max_tokens_override if max_tokens_override is not None else self.settings.max_completion_tokens

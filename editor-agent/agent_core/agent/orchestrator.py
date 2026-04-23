@@ -461,35 +461,45 @@ class AgentOrchestrator:
     ) -> SessionRecord | None:
         if not user_input or mode != AgentMode.ASK:
             return None
-            
-        # Get last 100 chars to ignore long boilerplate
-        tail = user_input.strip()[-100:].lower()
-        
-        greetings = {
-            "selam", "merhaba", "hi", "hello", "hey", "nasılsın", "naber", 
-            "who are you", "kimsin", "ne yapabilirsin", "what can you do"
+
+        # Check only the last 120 chars to ignore long boilerplate injected by Continue
+        tail = user_input.strip()[-120:].lower()
+
+        # Turkish and English greetings / small-talk that don't need LLM
+        tr_greetings = {
+            "selam", "merhaba", "nasılsın", "naber", "ne haber", "iyi misin",
+            "kimsin", "ne yapabilirsin", "ordamısın", "ordasın", "orada mısın",
+            "burada mısın", "uyandın mı", "hazır mısın", "çalışıyor musun",
         }
-        
-        # Check if any greeting appears as a standalone word in the tail
-        import re
+        en_greetings = {
+            "hi", "hello", "hey", "who are you", "what can you do",
+            "are you there", "you there", "you awake",
+        }
+        all_greetings = tr_greetings | en_greetings
+
         is_greeting = False
-        for g in greetings:
+        is_turkish = False
+        for g in all_greetings:
             if re.search(rf"\b{re.escape(g)}\b", tail):
                 is_greeting = True
+                if g in tr_greetings:
+                    is_turkish = True
                 break
-                
+
         if is_greeting:
-            response_text = (
-                "Selam! Ben Laz-Agent. Sana bu projede yardımcı olmak için buradayım. "
-                "Kod analizi yapabilir, hataları bulabilir veya yeni özellikler ekleyebilirim. "
-                "Nasıl yardımcı olabilirim?"
-            ) if "selam" in tail or "merhaba" in tail or "nasılsın" in tail else (
-                "Hello! I am Laz-Agent, your architectural assistant. "
-                "I can analyze your code, hunt for bugs, or suggest improvements. "
-                "How can I help you today?"
-            )
-            
-            from agent_core.models import ParsedAnswer
+            if is_turkish:
+                response_text = (
+                    "Evet, buradayım! Ben Laz-Agent. "
+                    "Kod analizi yapabilir, hataları bulabilir veya yeni özellikler ekleyebilirim. "
+                    "Nasıl yardımcı olabilirim?"
+                )
+            else:
+                response_text = (
+                    "Yes, I'm here! I am Laz-Agent, your architectural assistant. "
+                    "I can analyze your code, hunt for bugs, or suggest improvements. "
+                    "How can I help you today?"
+                )
+
             return SessionRecord(
                 session_id=build_session_id(mode),
                 created_at=utc_now(),
@@ -535,8 +545,15 @@ class AgentOrchestrator:
             return False
 
         # Trivial check for greetings to avoid workspace scan
-        tail = text[-100:].strip()
-        if any(g in tail for g in {"selam", "merhaba", "hi", "hello", "hey", "nasılsın"}):
+        tail = text[-120:].strip()
+        _small_talk = {
+            "selam", "merhaba", "nasılsın", "naber", "ne haber", "iyi misin",
+            "kimsin", "ne yapabilirsin", "ordamısın", "ordasın", "orada mısın",
+            "burada mısın", "uyandın mı", "hazır mısın", "çalışıyor musun",
+            "hi", "hello", "hey", "who are you", "what can you do",
+            "are you there", "you there",
+        }
+        if any(g in tail for g in _small_talk):
             return False
 
         repo_keywords = {

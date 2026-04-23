@@ -40,20 +40,24 @@ def build_openai_models_response() -> OpenAIModelsResponse:
 
 
 def extract_user_message(messages: list[OpenAIMessage]) -> str | None:
-    # Combine last few messages to capture full context if selection is separated
-    parts: list[str] = []
-    for message in messages[-3:]: # Look at last 3 messages for context
+    """Return the last non-empty user message text.
+
+    Role semantics are preserved in the full messages list that gets forwarded
+    to the LLM.  This function is only used to extract the *user intent* string
+    for workspace ranking and trivial-ask detection — it does NOT collapse the
+    whole conversation into a single string.
+    """
+    for message in reversed(messages):
+        if message.role == "user":
+            text = _content_to_text(message.content)
+            if text:
+                return text
+    # Fallback: last non-empty message of any role
+    for message in reversed(messages):
         text = _content_to_text(message.content)
         if text:
-            # Continue often injects <important_rules> at the start.
-            # We want to keep it for the LLM but for our trivial check, we might want the pure input.
-            parts.append(text)
-    
-    combined = "\n\n".join(parts) if parts else None
-    if combined:
-        # Debug: what's at the end?
-        print(f"DEBUG:    Message end: {combined[-100:].strip()!r}")
-    return combined
+            return text
+    return None
 
 
 def extract_request_workspace(request: OpenAIChatCompletionRequest) -> str | None:
@@ -125,7 +129,7 @@ def extract_diff(request: OpenAIChatCompletionRequest) -> str | None:
 
 def extract_preferred_files(request: OpenAIChatCompletionRequest) -> list[str]:
     preferred: set[str] = set()
-    
+
     # 1. Check explicit metadata
     for container in (request.extra_body, request.metadata):
         if isinstance(container, dict):
@@ -134,16 +138,17 @@ def extract_preferred_files(request: OpenAIChatCompletionRequest) -> list[str]:
                 for f in val:
                     preferred.add(str(f).replace("\\", "/").strip())
 
-    # 2. Heuristic: Scan message history for potential file paths
+    # 2. Heuristic: scan message history for explicit file paths (must contain a slash)
     import re
-    # Match strings that look like paths: word/word.ext or word.ext
-    path_pattern = re.compile(r'([a-zA-Z0-9_\-\./]+\.[a-zA-Z0-9]{1,5})')
-    
-    for msg in request.messages[-5:]: # Scan last 5 messages
+    # Only match strings that look like real paths: must have at least one directory separator
+    path_pattern = re.compile(r'([a-zA-Z0-9_\-]+(?:/[a-zA-Z0-9_\-\.]+)+)')
+
+    for msg in request.messages[-5:]:
         text = _content_to_text(msg.content)
         for match in path_pattern.findall(text):
-            # Basic validation to avoid matching plain words
-            if "." in match and "/" in match or len(match.split(".")[-1]) in {2, 3, 4}:
+            # Must end with a recognised code/config extension
+            ext = match.rsplit(".", 1)[-1] if "." in match else ""
+            if ext in {"py", "js", "ts", "tsx", "jsx", "json", "md", "txt", "yml", "yaml", "html", "css"}:
                 preferred.add(match.replace("\\", "/").strip())
 
     return sorted(list(preferred))

@@ -37,7 +37,7 @@ from agent_core.server.schemas import (
     SuggestRequest,
     WorkspaceRequest,
 )
-from agent_core.server.service import build_health_status, run_agent
+from agent_core.server.service import build_health_status, run_agent, stream_agent
 from agent_core.output.writers import SessionWriter
 from agent_core.config import Settings
 from agent_core.logger import configure_logger as _configure_logger
@@ -48,7 +48,11 @@ def _get_logger():
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    ensure_environment_ready()
+    # Warn if API key is missing but do NOT crash — /health will report ok=False
+    try:
+        ensure_environment_ready()
+    except RuntimeError as exc:
+        _get_logger().warning("Startup warning: %s", exc)
     settings = Settings.load()
     writer = SessionWriter(settings)
     pruned_count = writer.prune_old_sessions(max_age_days=7)
@@ -188,8 +192,9 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
 
             async def event_stream():
                 try:
-                    logger.debug("Calling run_agent (stream path)...")
-                    session = await run_agent(
+                    logger.debug("Calling stream_agent (true token streaming)...")
+                    has_content = False
+                    async for chunk in stream_agent(
                         AgentMode(mode_value),
                         workspace,
                         user_message,
@@ -198,16 +203,15 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
                         changed_files=extract_changed_files(request),
                         diff_text=extract_diff(request),
                         preferred_files=extract_preferred_files(request),
-                    )
-                    logger.debug("run_agent returned (stream path).")
-                    content = session_to_plain_text(session)
-                    if content:
-                        yield format_openai_stream_chunk(
-                            model=request.model,
-                            content=content,
-                            completion_id=completion_id,
-                            created=created,
-                        )
+                    ):
+                        if chunk:
+                            has_content = True
+                            yield format_openai_stream_chunk(
+                                model=request.model,
+                                content=chunk,
+                                completion_id=completion_id,
+                                created=created,
+                            )
                     yield format_openai_stream_chunk(
                         model=request.model,
                         content=None,
@@ -226,6 +230,7 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
                     )
                     yield "data: [DONE]\n\n"
                 except Exception as exc:
+                    logger.exception("Unhandled error in stream_agent")
                     yield format_openai_stream_chunk(
                         model=request.model,
                         content=f"The local agent could not complete the request: {str(exc)}",
