@@ -19,6 +19,24 @@ class SessionWriter:
         )
         return target
 
+    def prune_old_sessions(self, max_age_days: int = 7) -> int:
+        import time
+        count = 0
+        now = time.time()
+        max_age_seconds = max_age_days * 86400
+        
+        if not self.settings.session_dir.exists():
+            return 0
+            
+        for file in self.settings.session_dir.glob("*.json"):
+            if now - file.stat().st_mtime > max_age_seconds:
+                try:
+                    file.unlink()
+                    count += 1
+                except OSError:
+                    continue
+        return count
+
 
 class PatchProposalWriter:
     def __init__(self, settings: Settings) -> None:

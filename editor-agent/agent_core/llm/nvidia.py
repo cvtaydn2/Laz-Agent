@@ -157,11 +157,14 @@ class NvidiaProvider(LLMProvider):
                         break
                     try:
                         chunk = json.loads(data_str)
-                        delta = chunk.get("choices", [{}])[0].get("delta", {})
+                        choices = chunk.get("choices", [])
+                        if not choices:
+                            continue
+                        delta = choices[0].get("delta", {})
                         content = delta.get("content", "")
                         if content:
                             yield content
-                    except json.JSONDecodeError:
+                    except (json.JSONDecodeError, KeyError, IndexError):
                         continue
 
     def _parse_response(self, data: dict) -> ModelResponse:

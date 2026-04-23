@@ -35,11 +35,19 @@ from agent_core.server.schemas import (
     WorkspaceRequest,
 )
 from agent_core.server.service import build_health_status, run_agent, stream_agent
+from agent_core.output.writers import SessionWriter
+from agent_core.config import Settings
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     ensure_environment_ready()
+    # Prune old sessions on startup to prevent disk bloat
+    settings = Settings.load()
+    writer = SessionWriter(settings)
+    pruned_count = writer.prune_old_sessions(max_age_days=7)
+    if pruned_count > 0:
+        print(f"INFO:     Pruned {pruned_count} old session(s).")
     yield
 
 

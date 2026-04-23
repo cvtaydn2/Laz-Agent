@@ -8,6 +8,11 @@ from pathlib import Path
 from agent_core.config import Settings
 from agent_core.models import FileScanResult, WorkspaceSummary
 from agent_core.workspace.filters import is_allowed_file, is_ignored_directory
+import time
+
+# Global in-memory cache for scan results to provide near-instant consecutive requests
+_SCAN_CACHE: dict[str, tuple[float, list[FileScanResult], WorkspaceSummary]] = {}
+_SCAN_TTL = 60.0  # 60 seconds cache life
 
 
 class WorkspaceScanner:
@@ -15,7 +20,17 @@ class WorkspaceScanner:
         self.settings = settings
 
     async def scan(self, workspace_path: Path) -> tuple[list[FileScanResult], WorkspaceSummary]:
-        return await asyncio.to_thread(self._sync_scan, workspace_path)
+        ws_key = str(workspace_path.resolve())
+        now = time.time()
+        
+        if ws_key in _SCAN_CACHE:
+            timestamp, results, summary = _SCAN_CACHE[ws_key]
+            if now - timestamp < _SCAN_TTL:
+                return results, summary
+                
+        results, summary = await asyncio.to_thread(self._sync_scan, workspace_path)
+        _SCAN_CACHE[ws_key] = (now, results, summary)
+        return results, summary
 
     def _sync_scan(self, workspace_path: Path) -> tuple[list[FileScanResult], WorkspaceSummary]:
         included: list[FileScanResult] = []
