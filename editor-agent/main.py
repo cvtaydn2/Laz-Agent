@@ -123,6 +123,20 @@ def apply(
     render_response(console, response)
 
 
+@app.command(help="Revert the changes made in a specific session using its session ID.")
+def rollback(
+    session_id: str = typer.Argument(..., help="The session ID to rollback (e.g., apply-20240101-120000).")
+) -> None:
+    """Revert the changes made in a specific session."""
+    orchestrator = _build_orchestrator()
+    success = asyncio.run(orchestrator.rollback(session_id))
+    if success:
+        console.print(f"[bold green]Successfully rolled back session: {session_id}[/bold green]")
+    else:
+        console.print(f"[bold red]Failed to rollback session: {session_id}[/bold red]")
+        raise typer.Exit(code=1)
+
+
 def main(argv: Optional[list[str]] = None) -> int:
     app(args=argv)
     return 0

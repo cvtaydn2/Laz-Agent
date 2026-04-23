@@ -26,7 +26,10 @@ def render_health(console: Console, status: HealthStatus) -> None:
 def render_response(console: Console, session: SessionRecord) -> None:
     parsed = session.parsed_response
 
-    console.print(Panel(parsed.summary, title=f"{session.mode.value.title()} Summary"))
+    if parsed.thought:
+        _safe_panel(console, parsed.thought, title="Reasoning & Planning", style="dim cyan")
+
+    _safe_panel(console, parsed.summary, title=f"{session.mode.value.title()} Summary")
 
     table = Table(title="Workspace Snapshot")
     table.add_column("Field")
@@ -54,7 +57,7 @@ def render_response(console: Console, session: SessionRecord) -> None:
     _render_list(console, "Next Steps", parsed.next_steps)
     if parsed.file_operations:
         operation_lines = [f"- {item.action}: {item.path}" for item in parsed.file_operations]
-        console.print(Panel("\n".join(operation_lines), title="File Operations"))
+        _safe_panel(console, "\n".join(operation_lines), title="File Operations")
 
     console.print(f"Session saved to state/sessions/{session.session_id}.json")
     if session.patch_proposal_path:
@@ -65,8 +68,16 @@ def render_response(console: Console, session: SessionRecord) -> None:
         console.print(f"Apply log saved to {session.apply_log_path}")
 
 
+def _safe_panel(console: Console, text: str, title: str, style: str = "") -> None:
+    # Replace problematic arrows and other non-ASCII characters for Windows CMD/PowerShell
+    safe_text = text.replace("\u2192", "->").replace("\u21d2", "=>")
+    # Generic encoding fallback for other weird chars
+    safe_text = safe_text.encode("ascii", "replace").decode("ascii")
+    console.print(Panel(safe_text, title=title, style=style))
+
+
 def _render_list(console: Console, title: str, items: list[str]) -> None:
     if not items:
         return
     rendered = "\n".join(f"- {item}" for item in items)
-    console.print(Panel(rendered, title=title))
+    _safe_panel(console, rendered, title=title)

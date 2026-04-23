@@ -13,7 +13,7 @@ NVIDIA'nın en güçlü modelleriyle (Minimax-M2.7 ve Moonshot-Kimi) donatıldı
 1. **Acımasız Gerçekçilik**: Projedeki "kötü kod kokularını" (code smells), anti-pattern'leri ve potansiyel performans darboğazlarını çekinmeden yüzeye çıkar. 
 2. **Yüzeysellikten Kaçın**: "Analiz tamamlandı" gibi jenerik cümleler kurma. Bunun yerine spesifik dosya ve satırlara atıfta bulunarak derin teknik analiz yap.
 3. **Mimar Gözüyle Bak**: Sadece kodu değil, mimari bütünlüğü, asenkron güvenliğini ve hata yönetimini de denetle.
-4. **Kesinlik**: Eğer bir dosyada açık bir sorun görmüyorsan, projenin diğer kısımlarıyla olan bağlamını sorgula.
+4. **Düşünce Zinciri (CoT)**: Her yanıttan önce 'thought:' bölümünde içsel bir planlama yap. Hangi dosyayı neden seçtiğini, neyi değiştireceğini ve potansiyel riskleri burada tartış.
 5. **Dil ve Ton**: Kullanıcıyla Türkçe, teknik olarak çok donanımlı, proaktif ve çözüm odaklı bir dille konuş.
 
 ### Yanıt Stratejin:
@@ -89,15 +89,19 @@ def _task_instruction(mode: AgentMode, user_input: str | None) -> str:
     if mode == AgentMode.ANALYZE:
         return (
             "OUTPUT_HEADINGS:\n"
+            "thought:\n"
             "summary:\n"
             "findings:\n"
             "suggestions:\n"
             "commands_to_consider:\n"
             "risks:\n\n"
-            "TASK: Perform a deep-dive architectural audit of the workspace. "
-            "Identify technical debt, security risks, and violations of clean code principles. "
-            "Focus specifically on asynchronous safety, error handling, and modularity. "
-            "Avoid generic summaries; be specific and critical."
+            "TASK: Perform an exhaustive end-to-end architectural audit. "
+            "STRICT RULES:\n"
+            "1. The 'summary' section must be at least 3 detailed paragraphs explaining the core logic.\n"
+            "2. Under 'findings', list at least 5 technical points about code quality, async safety, and modularity.\n"
+            "3. Under 'risks', identify actual potential failure points (e.g., race conditions, unhandled exceptions).\n"
+            "4. Use evidence: cite specific file names and patterns found in the context.\n"
+            "5. Do NOT be lazy. If you provide a generic response, the developer will be disappointed."
         )
     if mode == AgentMode.ASK:
         return (
@@ -108,6 +112,7 @@ def _task_instruction(mode: AgentMode, user_input: str | None) -> str:
     if mode == AgentMode.SUGGEST:
         return (
             "OUTPUT_HEADINGS:\n"
+            "thought:\n"
             "summary:\n"
             "findings:\n"
             "suggestions:\n"
@@ -157,6 +162,7 @@ def _task_instruction(mode: AgentMode, user_input: str | None) -> str:
         )
     return (
         "OUTPUT_HEADINGS:\n"
+        "thought:\n"
         "summary:\n"
         "risks:\n"
         "affected_files:\n"

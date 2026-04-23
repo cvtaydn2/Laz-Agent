@@ -8,6 +8,9 @@ from agent_core.models import ParsedAnswer, ProposedFileOperation, ReviewFinding
 
 class ResponseParser:
     HEADINGS = {
+        "thought": "thought",
+        "reasoning": "thought",
+        "rationale": "thought",
         "summary": "summary",
         "findings": "findings",
         "suggestions": "suggestions",
@@ -22,6 +25,8 @@ class ResponseParser:
         "next_steps": "next_steps",
         "file operations": "file_operations",
         "file_operations": "file_operations",
+        "command_operations": "command_operations",
+        "commands": "command_operations",
     }
 
     def parse(self, text: str) -> ParsedAnswer:
@@ -56,7 +61,9 @@ class ResponseParser:
             )
 
         summary = " ".join(sections["summary"]).strip() or text.strip() or "No model content returned."
+        thought = "\n".join(sections["thought"]).strip()
         return ParsedAnswer(
+            thought=thought,
             summary=summary,
             findings=sections["findings"],
             suggestions=sections["suggestions"],
@@ -66,6 +73,7 @@ class ResponseParser:
             proposed_changes=sections["proposed_changes"],
             next_steps=sections["next_steps"],
             file_operations=self._parse_file_operations(text),
+            command_operations=self._parse_command_operations(text),
             raw_text=text,
             parse_strategy="text",
         )
@@ -84,6 +92,7 @@ class ResponseParser:
             return None
 
         return ParsedAnswer(
+            thought=self._string_or_default(payload.get("thought") or payload.get("reasoning") or payload.get("rationale"), ""),
             summary=self._string_or_default(payload.get("summary"), text),
             findings=self._to_string_list(payload.get("findings")),
             suggestions=self._to_string_list(payload.get("suggestions")),
@@ -93,6 +102,7 @@ class ResponseParser:
             proposed_changes=self._to_string_list(payload.get("proposed_changes")),
             next_steps=self._to_string_list(payload.get("next_steps")),
             file_operations=self._parse_json_file_operations(payload.get("file_operations")),
+            command_operations=self._parse_json_command_operations(payload.get("command_operations")),
             raw_text=text,
             parse_strategy="json",
             review_findings=self._parse_review_findings(payload.get("findings")),
@@ -141,6 +151,33 @@ class ResponseParser:
                 )
         
         return operations
+
+    def _parse_command_operations(self, text: str) -> list[ProposedCommandOperation]:
+        from agent_core.models import ProposedCommandOperation
+        commands: list[ProposedCommandOperation] = []
+        pattern = re.compile(
+            r"BEGIN_COMMAND\s+COMMAND:\s*(?P<command>[^\r\n]+)\s+RATIONALE:\s*(?P<rationale>.*?)\s+END_COMMAND",
+            re.DOTALL,
+        )
+        for match in pattern.finditer(text):
+            command = match.group("command").strip().strip("`").strip("'")
+            rationale = match.group("rationale").strip()
+            commands.append(ProposedCommandOperation(command=command, rationale=rationale))
+        return commands
+
+    def _parse_json_command_operations(self, value: object) -> list[ProposedCommandOperation]:
+        from agent_core.models import ProposedCommandOperation
+        if not isinstance(value, list):
+            return []
+        commands: list[ProposedCommandOperation] = []
+        for item in value:
+            if not isinstance(item, dict):
+                continue
+            command = str(item.get("command", "")).strip()
+            rationale = str(item.get("rationale", "")).strip()
+            if command:
+                commands.append(ProposedCommandOperation(command=command, rationale=rationale))
+        return commands
 
     def _extract_json_candidate(self, text: str) -> str | None:
         stripped = text.strip()

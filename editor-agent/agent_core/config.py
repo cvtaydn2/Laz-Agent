@@ -58,7 +58,7 @@ class Settings(BaseModel):
     max_chars_per_file: int = Field(default=2500, alias="AGENT_MAX_CHARS_PER_FILE")
     max_context_chars: int = Field(default=12000, alias="AGENT_MAX_CONTEXT_CHARS")
     top_k_files: int = Field(default=15, alias="AGENT_TOP_K_FILES")
-    max_completion_tokens: int = Field(default=300, alias="AGENT_MAX_COMPLETION_TOKENS")
+    max_completion_tokens: int = Field(default=2048, alias="AGENT_MAX_COMPLETION_TOKENS")
     server_host: str = Field(default="127.0.0.1", alias="AGENT_SERVER_HOST")
     server_port: int = Field(default=8000, alias="AGENT_SERVER_PORT")
     default_workspace: str = Field(default="", alias="AGENT_DEFAULT_WORKSPACE")
@@ -79,7 +79,7 @@ class Settings(BaseModel):
                 "AGENT_MAX_CHARS_PER_FILE": int(os.getenv("AGENT_MAX_CHARS_PER_FILE", "2500")),
                 "AGENT_MAX_CONTEXT_CHARS": int(os.getenv("AGENT_MAX_CONTEXT_CHARS", "12000")),
                 "AGENT_TOP_K_FILES": int(os.getenv("AGENT_TOP_K_FILES", "15")),
-                "AGENT_MAX_COMPLETION_TOKENS": int(os.getenv("AGENT_MAX_COMPLETION_TOKENS", "300")),
+                "AGENT_MAX_COMPLETION_TOKENS": int(os.getenv("AGENT_MAX_COMPLETION_TOKENS", "2048")),
                 "AGENT_SERVER_HOST": os.getenv("AGENT_SERVER_HOST", "127.0.0.1"),
                 "AGENT_SERVER_PORT": int(os.getenv("AGENT_SERVER_PORT", "8000")),
                 "AGENT_DEFAULT_WORKSPACE": os.getenv("AGENT_DEFAULT_WORKSPACE", os.getcwd()),

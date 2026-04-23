@@ -32,6 +32,7 @@ from agent_core.tools.patch_tools import build_patch_proposal
 from agent_core.workspace.ranker import WorkspaceRanker
 from agent_core.workspace.reader import WorkspaceReader
 from agent_core.workspace.scanner import WorkspaceScanner
+from agent_core.tools.command_tools import execute_command
 
 
 class AgentOrchestrator:
@@ -79,10 +80,9 @@ class AgentOrchestrator:
                     workspace_path = detected_path
                     # Force workspace scanning when a specific path is provided
                     force_workspace_use = True
-                else:
-                    force_workspace_use = False
-            else:
-                force_workspace_use = False
+
+        if workspace_path:
+            force_workspace_use = True
         self.logger.info("Starting run: mode=%s workspace=%s", mode.value, workspace_path)
         trivial_response = self._build_trivial_ask_response(mode, workspace_path, user_input)
         if trivial_response is not None:
@@ -205,6 +205,23 @@ class AgentOrchestrator:
                 request=user_input,
                 operations=parsed.file_operations,
             )
+            
+            # New: Execute commands if provided and confirmed
+            if parsed.command_operations:
+                self.logger.info("Executing %d proposed commands", len(parsed.command_operations))
+                from agent_core.models import CommandExecutionRecord
+                for op in parsed.command_operations:
+                    res = await execute_command(op.command, cwd=str(workspace_path.resolve()))
+                    apply_log.commands_executed.append(
+                        CommandExecutionRecord(
+                            command=op.command,
+                            stdout=res.stdout,
+                            stderr=res.stderr,
+                            returncode=res.returncode,
+                            success=(res.returncode == 0)
+                        )
+                    )
+            
             apply_log_path = str(await self.apply_log_writer.write(apply_log))
 
         session = SessionRecord(
@@ -234,6 +251,79 @@ class AgentOrchestrator:
             context_char_count,
         )
         return session
+
+    async def rollback(self, session_id: str) -> bool:
+        """
+        Reverts the changes made in a specific session.
+        """
+        # 1. Load the session
+        session = await self.session_writer.read(session_id)
+        if not session or not session.apply_log_path:
+            self.logger.error("No apply log found for session %s", session_id)
+            return False
+        
+        # 2. Load the apply log
+        log_path = Path(session.apply_log_path)
+        if not log_path.exists():
+            return False
+            
+        with open(log_path, "r", encoding="utf-8") as f:
+            from agent_core.models import ApplyLogRecord
+            log_data = json.load(f)
+            log = ApplyLogRecord(**log_data)
+        
+        # 3. Perform rollback
+        success = self.apply_engine.rollback(Path(session.workspace_path), log)
+        if success:
+            self.logger.info("Rollback successful for session %s", session_id)
+        else:
+            self.logger.error("Rollback failed for session %s", session_id)
+        return success
+
+    async def self_heal(
+        self,
+        workspace_path: Path,
+        max_retries: int = 2
+    ) -> list[SessionRecord]:
+        """
+        An autonomous loop that attempts to fix errors in the project by running tests
+        and feeding errors back to the model.
+        """
+        sessions = []
+        self.logger.info("Starting self-healing loop for workspace: %s", workspace_path)
+        
+        # 1. Run initial test command to find bugs
+        test_command = "pytest" # Default for this project
+        
+        for attempt in range(max_retries):
+            self.logger.info("Self-healing attempt %d/%d", attempt + 1, max_retries)
+            res = await execute_command(test_command, cwd=str(workspace_path.resolve()))
+            
+            if res.returncode == 0:
+                self.logger.info("Self-healing successful: All tests passed.")
+                break
+                
+            # 2. Feed error back to model
+            healing_request = (
+                f"Kendi kendimi iyileştirme (self-healing) modundayım. "
+                f"'{test_command}' komutu çalıştırıldı ve şu hata alındı:\n\n"
+                f"STDOUT:\n{res.stdout}\n\nSTDERR:\n{res.stderr}\n\n"
+                f"Lütfen bu hatayı analiz et, sorunlu dosyaları belirle ve düzeltme (apply) için patch öner."
+            )
+            
+            session = await self.run(
+                mode=AgentMode.APPLY,
+                workspace_path=workspace_path,
+                user_input=healing_request,
+                confirm=True # Auto-apply in self-healing mode
+            )
+            sessions.append(session)
+            
+            if not session.parsed_response.file_operations:
+                self.logger.warning("Model did not suggest any fixes. Breaking loop.")
+                break
+                
+        return sessions
 
     async def stream_run(
         self,

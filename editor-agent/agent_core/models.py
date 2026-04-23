@@ -63,6 +63,7 @@ class ReviewFinding(BaseModel):
 
 
 class ParsedAnswer(BaseModel):
+    thought: str = ""
     summary: str
     findings: list[str] = Field(default_factory=list)
     suggestions: list[str] = Field(default_factory=list)
@@ -77,12 +78,18 @@ class ParsedAnswer(BaseModel):
     review_findings: list[ReviewFinding] = Field(default_factory=list)
     risks_text: str = ""
     next_steps_text: str = ""
+    command_operations: list[ProposedCommandOperation] = Field(default_factory=list)
 
 
 class ProposedFileOperation(BaseModel):
     path: str
     action: str
     content: str
+
+
+class ProposedCommandOperation(BaseModel):
+    command: str
+    rationale: str
 
 
 class PatchProposal(BaseModel):
@@ -101,7 +108,7 @@ class PatchProposal(BaseModel):
 class AppliedFileRecord(BaseModel):
     path: str
     action: str
-    backup_path: str
+    backup_path: str | None = None
     existed_before: bool
 
 
@@ -114,7 +121,16 @@ class ApplyLogRecord(BaseModel):
     rollback_performed: bool = False
     request: str | None = None
     files_written: list[AppliedFileRecord] = Field(default_factory=list)
+    commands_executed: list[CommandExecutionRecord] = Field(default_factory=list)
     error: str | None = None
+
+
+class CommandExecutionRecord(BaseModel):
+    command: str
+    stdout: str
+    stderr: str
+    returncode: int
+    success: bool
 
 
 class SessionRecord(BaseModel):

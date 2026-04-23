@@ -58,12 +58,13 @@ class ApplyEngine:
                     AppliedFileRecord(
                         path=operation.path,
                         action="update",
-                        backup_path=str(backup_path),
-                        existed_before=True,
+                        backup_path=str(backup_path) if backup_path.exists() else None,
+                        existed_before=backup_path.exists(),
                     )
                 )
         except Exception as exc:
-            self._rollback(workspace_path, written_records)
+            for record in reversed(written_records):
+                self._rollback_record(workspace_path, record)
             return ApplyLogRecord(
                 session_id=session_id,
                 created_at=created_at,
@@ -86,6 +87,19 @@ class ApplyEngine:
             files_written=written_records,
         )
 
+    def rollback(self, workspace_path: Path, log: ApplyLogRecord) -> bool:
+        """
+        Manually rollback a previous apply operation using its log record.
+        """
+        if not log.files_written:
+            return False
+        
+        try:
+            self._rollback(workspace_path, log.files_written)
+            return True
+        except Exception:
+            return False
+
     def _resolve_target_path(self, workspace_path: Path, relative_path: str) -> Path:
         candidate = (workspace_path / relative_path).resolve()
         workspace_root = workspace_path.resolve()
@@ -106,8 +120,8 @@ class ApplyEngine:
         operations: list[ProposedFileOperation],
     ) -> str | None:
         for operation in operations:
-            if operation.action not in {"update", "create"}:
-                return f"Unsupported apply action for safe mode: {operation.action}"
+            if operation.action not in {"update", "create", "delete"}:
+                return f"Unsupported apply action: {operation.action}"
             
             target_path = self._resolve_target_path(workspace_path, operation.path)
             
@@ -140,7 +154,11 @@ class ApplyEngine:
     def _rollback(self, workspace_path: Path, written_records: list[AppliedFileRecord]) -> None:
         for record in reversed(written_records):
             target_path = self._resolve_target_path(workspace_path, record.path)
-            backup_path = Path(record.backup_path)
-            if backup_path.exists():
-                target_path.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(backup_path, target_path)
+            if record.backup_path and record.backup_path != "None":
+                backup_path = Path(record.backup_path)
+                if backup_path.exists():
+                    target_path.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(backup_path, target_path)
+            elif not record.existed_before:
+                if target_path.exists():
+                    target_path.unlink()
