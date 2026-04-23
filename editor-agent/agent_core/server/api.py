@@ -140,23 +140,46 @@ def list_models() -> OpenAIModelsResponse:
 
 
 @app.post("/v1/chat/completions")
-async def chat_completions(request: OpenAIChatCompletionRequest):
+async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Request):
     try:
+        # Log raw body to see what Continue is actually sending
+        try:
+            body = await raw_request.json()
+            print(f"DEBUG:    Raw Body Keys: {list(body.keys())}")
+            if "extraBody" in body:
+                 print(f"DEBUG:    Found extraBody: {list(body['extraBody'].keys())}")
+            if "metadata" in body:
+                 print(f"DEBUG:    Found metadata: {list(body['metadata'].keys()) if isinstance(body['metadata'], dict) else body['metadata']}")
+        except:
+            pass
         workspace = extract_request_workspace(request)
+        print(f"DEBUG:    Workspace extracted: {workspace}")
         if not workspace:
             raise HTTPException(
                 status_code=400,
                 detail="A workspace path is required under extra_body.workspace, metadata.workspace, or top-level workspace.",
             )
 
-        mode_value = validate_openai_mode(extract_request_mode(request))
+        req_mode = extract_request_mode(request)
+        print(f"DEBUG:    Raw mode from request: {req_mode}")
+        mode_value = validate_openai_mode(req_mode)
+        print(f"DEBUG:    Validated mode: {mode_value}")
+        
         user_message = extract_user_message(request.messages)
+        print(f"DEBUG:    Extracted user message (len={len(user_message) if user_message else 0}): {user_message[:50]}...")
+        
+        # Log extra_body and metadata for debugging
+        print(f"DEBUG:    extra_body: {request.extra_body}")
+        print(f"DEBUG:    metadata: {request.metadata}")
+        print(f"DEBUG:    workspace_fallback: {Settings.load().default_workspace}")
+        
         if not user_message:
             raise HTTPException(
                 status_code=400,
                 detail="At least one non-empty user message is required.",
             )
 
+        print(f"DEBUG:    Calling run_agent...")
         session = await run_agent(
             AgentMode(mode_value),
             workspace,
@@ -167,6 +190,7 @@ async def chat_completions(request: OpenAIChatCompletionRequest):
             diff_text=extract_diff(request),
             preferred_files=extract_preferred_files(request),
         )
+        print(f"DEBUG:    run_agent returned successfully.")
         if request.stream:
             created = int(datetime.now(timezone.utc).timestamp())
             completion_id = f"chatcmpl-stream-{created}"

@@ -110,7 +110,9 @@ class AgentOrchestrator:
         )
 
         if use_workspace:
+            self.logger.info("Scanning workspace: %s", workspace_path)
             scan_results, workspace_summary = await self.scanner.scan(workspace_path)
+            self.logger.info("Ranking files (mode=%s)...", mode.value)
             ranked_files = await self.ranker.rank(
                 workspace_path,
                 scan_results,
@@ -118,6 +120,7 @@ class AgentOrchestrator:
                 user_input,
                 preferred_files=preferred_files or changed_files,
             )
+            self.logger.info("Reading selected files...")
             selected_context, reader_notes = await self.reader.read_ranked_files(workspace_path, ranked_files)
             workspace_summary.notes.extend(reader_notes)
             workspace_summary.preferred_files = preferred_files or changed_files or []
@@ -184,11 +187,13 @@ class AgentOrchestrator:
         else:
             comparison = None
             try:
+                self.logger.info("Sending request to LLM (model=%s)...", self.settings.nvidia_model)
                 model_response = await self.client.chat(
                     messages,
                     temperature_override=temperature_override,
                     max_tokens_override=max_tokens_override,
                 )
+                self.logger.info("Received LLM response.")
             except (NvidiaTimeoutError, NvidiaBackendError):
                 self.logger.exception(
                     "Backend inference failed: workspace=%s mode=%s backend_model=%s",
@@ -453,8 +458,54 @@ class AgentOrchestrator:
         workspace_path: Path,
         user_input: str | None,
     ) -> SessionRecord | None:
-        # We now let the backend model handle all greetings and trivial queries
-        # for a more natural interaction.
+        if not user_input or mode != AgentMode.ASK:
+            return None
+            
+        # Get last 100 chars to ignore long boilerplate
+        tail = user_input.strip()[-100:].lower()
+        
+        greetings = {
+            "selam", "merhaba", "hi", "hello", "hey", "nasılsın", "naber", 
+            "who are you", "kimsin", "ne yapabilirsin", "what can you do"
+        }
+        
+        # Check if any greeting appears as a standalone word in the tail
+        import re
+        is_greeting = False
+        for g in greetings:
+            if re.search(rf"\b{re.escape(g)}\b", tail):
+                is_greeting = True
+                break
+                
+        if is_greeting:
+            response_text = (
+                "Selam! Ben Laz-Agent. Sana bu projede yardımcı olmak için buradayım. "
+                "Kod analizi yapabilir, hataları bulabilir veya yeni özellikler ekleyebilirim. "
+                "Nasıl yardımcı olabilirim?"
+            ) if "selam" in text or "merhaba" in text or "nasılsın" in text else (
+                "Hello! I am Laz-Agent, your architectural assistant. "
+                "I can analyze your code, hunt for bugs, or suggest improvements. "
+                "How can I help you today?"
+            )
+            
+            from agent_core.models import ParsedAnswer
+            return SessionRecord(
+                session_id=build_session_id(mode),
+                created_at=utc_now(),
+                mode=mode,
+                workspace_path=str(workspace_path),
+                prompt=user_input,
+                user_input=user_input,
+                workspace_summary=self._build_empty_workspace_summary(workspace_path, None),
+                ranked_files=[],
+                selected_context=[],
+                raw_response=response_text,
+                parsed_response=ParsedAnswer(
+                    summary=response_text,
+                    raw_text=response_text,
+                    parse_strategy="raw_text",
+                ),
+            )
         return None
 
     def _should_use_workspace(
@@ -479,8 +530,14 @@ class AgentOrchestrator:
         }:
             return True
         text = (user_input or "").strip().lower()
-        if not text:
+        if not text or len(text) < 3:
             return False
+
+        # Trivial check for greetings to avoid workspace scan
+        tail = text[-100:].strip()
+        if any(g in tail for g in {"selam", "merhaba", "hi", "hello", "hey", "nasılsın"}):
+            return False
+
         repo_keywords = {
             "project",
             "repo",
@@ -599,9 +656,35 @@ class AgentOrchestrator:
         )
 
     async def _run_diagnostic(self, workspace_path: Path) -> str | None:
-        self.logger.info("Running pre-flight diagnostic...")
-        # Try running pytest
-        res = await execute_command("pytest --maxfail=3", cwd=str(workspace_path.resolve()))
-        if res.returncode != 0:
-            return f"Tests are failing:\nSTDOUT: {res.stdout[:500]}\nSTDERR: {res.stderr[:500]}"
+        self.logger.info("Pre-flight diagnostic for workspace: %s", workspace_path)
+        
+        # Check if pytest exists in the environment first
+        import shutil
+        if not shutil.which("pytest"):
+            self.logger.info("pytest not found in environment. Skipping diagnostic.")
+            return None
+
+        try:
+            # Add a 5 second timeout to prevent hanging the whole request
+            res = await asyncio.wait_for(
+                execute_command("pytest --version", cwd=str(workspace_path.resolve())),
+                timeout=2.0
+            )
+            if res.returncode != 0:
+                self.logger.info("pytest exists but failed to run version check. Skipping diagnostic.")
+                return None
+
+            self.logger.info("Running pytest diagnostic...")
+            res = await asyncio.wait_for(
+                execute_command("pytest --maxfail=1", cwd=str(workspace_path.resolve())),
+                timeout=5.0
+            )
+            if res.returncode != 0:
+                return f"Tests are failing in this project:\nSTDOUT: {res.stdout[:300]}"
+        except asyncio.TimeoutError:
+            self.logger.warning("Diagnostic check timed out. Skipping.")
+            return "Diagnostic timed out (tests might be too slow)."
+        except Exception as e:
+            self.logger.error("Diagnostic check failed: %s", str(e))
+            return None
         return None

@@ -45,19 +45,32 @@ def extract_user_message(messages: list[OpenAIMessage]) -> str | None:
     for message in messages[-3:]: # Look at last 3 messages for context
         text = _content_to_text(message.content)
         if text:
+            # Continue often injects <important_rules> at the start.
+            # We want to keep it for the LLM but for our trivial check, we might want the pure input.
             parts.append(text)
-    return "\n\n".join(parts) if parts else None
+    
+    combined = "\n\n".join(parts) if parts else None
+    if combined:
+        # Debug: what's at the end?
+        print(f"DEBUG:    Message end: {combined[-100:].strip()!r}")
+    return combined
 
 
 def extract_request_workspace(request: OpenAIChatCompletionRequest) -> str | None:
+    # 1. Check common metadata/extra_body keys
     for container in (request.extra_body, request.metadata):
         if isinstance(container, dict):
-            workspace = container.get("workspace")
-            if isinstance(workspace, str) and workspace.strip():
-                return workspace.strip()
+            # Check multiple possible keys
+            for key in ("workspace", "working_directory", "workingDirectory", "cwd", "root", "rootPath", "projectPath", "baseDir"):
+                val = container.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
 
+    # 2. Check top-level (non-standard but possible)
     if request.workspace and request.workspace.strip():
         return request.workspace.strip()
+
+    # 3. Fallback to settings
     settings = Settings.load()
     if settings.default_workspace.strip():
         return settings.default_workspace.strip()

@@ -99,6 +99,7 @@ async def run_agent(
     orchestrator = build_orchestrator()
     workspace_path = resolve_workspace_or_400(workspace)
     try:
+        logger.info("Starting orchestrator.run for mode=%s", mode.value)
         return await orchestrator.run(
             mode=mode,
             workspace_path=workspace_path,
