@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from pathlib import Path
 from typing import Optional
 
 import typer
@@ -11,18 +10,17 @@ from agent_core.agent.orchestrator import AgentOrchestrator
 from agent_core.config import Settings
 from agent_core.models import AgentMode, HealthStatus
 from agent_core.output.formatter import render_health, render_response
+from agent_core.tools.file_tools import resolve_workspace as _resolve_workspace_util
 
 app = typer.Typer(add_completion=False, help="CLI-first local coding agent.")
 console = Console()
 
 
 def _resolve_workspace(workspace: str) -> Path:
-    path = Path(workspace).expanduser().resolve()
-    if not path.exists():
-        raise typer.BadParameter(f"Workspace does not exist: {path}")
-    if not path.is_dir():
-        raise typer.BadParameter(f"Workspace must be a directory: {path}")
-    return path
+    try:
+        return _resolve_workspace_util(workspace)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _build_orchestrator() -> AgentOrchestrator:

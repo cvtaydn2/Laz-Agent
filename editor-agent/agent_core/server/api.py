@@ -37,20 +37,23 @@ from agent_core.server.schemas import (
     SuggestRequest,
     WorkspaceRequest,
 )
-from agent_core.server.service import build_health_status, run_agent, stream_agent
+from agent_core.server.service import build_health_status, run_agent
 from agent_core.output.writers import SessionWriter
 from agent_core.config import Settings
+from agent_core.logger import configure_logger as _configure_logger
+
+def _get_logger():
+    return _configure_logger(Settings.load().logs_dir / "editor-agent.log")
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     ensure_environment_ready()
-    # Prune old sessions on startup to prevent disk bloat
     settings = Settings.load()
     writer = SessionWriter(settings)
     pruned_count = writer.prune_old_sessions(max_age_days=7)
     if pruned_count > 0:
-        print(f"INFO:     Pruned {pruned_count} old session(s).")
+        _get_logger().info("Pruned %d old session(s) on startup.", pruned_count)
     yield
 
 
@@ -141,19 +144,20 @@ def list_models() -> OpenAIModelsResponse:
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Request):
+    logger = _get_logger()
     try:
-        # Log raw body to see what Continue is actually sending
         try:
             body = await raw_request.json()
-            print(f"DEBUG:    Raw Body Keys: {list(body.keys())}")
+            logger.debug("Raw Body Keys: %s", list(body.keys()))
             if "extraBody" in body:
-                 print(f"DEBUG:    Found extraBody: {list(body['extraBody'].keys())}")
+                logger.debug("Found extraBody: %s", list(body["extraBody"].keys()))
             if "metadata" in body:
-                 print(f"DEBUG:    Found metadata: {list(body['metadata'].keys()) if isinstance(body['metadata'], dict) else body['metadata']}")
-        except:
+                logger.debug("Found metadata: %s", list(body["metadata"].keys()) if isinstance(body["metadata"], dict) else body["metadata"])
+        except Exception:
             pass
+
         workspace = extract_request_workspace(request)
-        print(f"DEBUG:    Workspace extracted: {workspace}")
+        logger.debug("Workspace extracted: %s", workspace)
         if not workspace:
             raise HTTPException(
                 status_code=400,
@@ -161,25 +165,84 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
             )
 
         req_mode = extract_request_mode(request)
-        print(f"DEBUG:    Raw mode from request: {req_mode}")
+        logger.debug("Raw mode from request: %s", req_mode)
         mode_value = validate_openai_mode(req_mode)
-        print(f"DEBUG:    Validated mode: {mode_value}")
-        
+        logger.debug("Validated mode: %s", mode_value)
+
         user_message = extract_user_message(request.messages)
-        print(f"DEBUG:    Extracted user message (len={len(user_message) if user_message else 0}): {user_message[:50]}...")
-        
-        # Log extra_body and metadata for debugging
-        print(f"DEBUG:    extra_body: {request.extra_body}")
-        print(f"DEBUG:    metadata: {request.metadata}")
-        print(f"DEBUG:    workspace_fallback: {Settings.load().default_workspace}")
-        
+        logger.debug("Message end: %r", user_message[-80:] if user_message else None)
+        logger.debug("Extracted user message (len=%d): %s...", len(user_message) if user_message else 0, (user_message or "")[:50])
+        logger.debug("extra_body: %s", request.extra_body)
+        logger.debug("metadata: %s", request.metadata)
+
         if not user_message:
             raise HTTPException(
                 status_code=400,
                 detail="At least one non-empty user message is required.",
             )
 
-        print(f"DEBUG:    Calling run_agent...")
+        # --- STREAM PATH ---
+        if request.stream:
+            created = int(datetime.now(timezone.utc).timestamp())
+            completion_id = f"chatcmpl-stream-{created}"
+
+            async def event_stream():
+                try:
+                    logger.debug("Calling run_agent (stream path)...")
+                    session = await run_agent(
+                        AgentMode(mode_value),
+                        workspace,
+                        user_message,
+                        temperature_override=request.temperature,
+                        max_tokens_override=request.max_tokens,
+                        changed_files=extract_changed_files(request),
+                        diff_text=extract_diff(request),
+                        preferred_files=extract_preferred_files(request),
+                    )
+                    logger.debug("run_agent returned (stream path).")
+                    content = session_to_plain_text(session)
+                    if content:
+                        yield format_openai_stream_chunk(
+                            model=request.model,
+                            content=content,
+                            completion_id=completion_id,
+                            created=created,
+                        )
+                    yield format_openai_stream_chunk(
+                        model=request.model,
+                        content=None,
+                        completion_id=completion_id,
+                        created=created,
+                        finish_reason="stop",
+                    )
+                    yield "data: [DONE]\n\n"
+                except NvidiaInferenceError as exc:
+                    yield format_openai_stream_chunk(
+                        model=request.model,
+                        content=exc.user_message,
+                        completion_id=completion_id,
+                        created=created,
+                        finish_reason="stop",
+                    )
+                    yield "data: [DONE]\n\n"
+                except Exception as exc:
+                    yield format_openai_stream_chunk(
+                        model=request.model,
+                        content=f"The local agent could not complete the request: {str(exc)}",
+                        completion_id=completion_id,
+                        created=created,
+                        finish_reason="stop",
+                    )
+                    yield "data: [DONE]\n\n"
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+            )
+
+        # --- NON-STREAM PATH ---
+        logger.debug("Calling run_agent...")
         session = await run_agent(
             AgentMode(mode_value),
             workspace,
@@ -190,54 +253,9 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
             diff_text=extract_diff(request),
             preferred_files=extract_preferred_files(request),
         )
-        print(f"DEBUG:    run_agent returned successfully.")
-        if request.stream:
-            created = int(datetime.now(timezone.utc).timestamp())
-            completion_id = f"chatcmpl-stream-{created}"
-
-            async def event_stream():
-                try:
-                    async for text_chunk in stream_agent(
-                        AgentMode(mode_value),
-                        workspace,
-                        user_message,
-                        temperature_override=request.temperature,
-                        max_tokens_override=request.max_tokens,
-                        changed_files=extract_changed_files(request),
-                        diff_text=extract_diff(request),
-                        preferred_files=extract_preferred_files(request),
-                    ):
-                        yield format_openai_stream_chunk(
-                            model=request.model,
-                            content=text_chunk,
-                            completion_id=completion_id,
-                            created=created,
-                        )
-                    
-                    yield format_openai_stream_chunk(
-                        model=request.model,
-                        content=None,
-                        completion_id=completion_id,
-                        created=created,
-                        finish_reason="stop",
-                    )
-                    yield "data: [DONE]\n\n"
-                except Exception as exc:
-                    yield format_openai_stream_chunk(
-                        model=request.model,
-                        content=f"\n\n[Streaming Error]: {str(exc)}",
-                        completion_id=completion_id,
-                        created=created,
-                        finish_reason="error",
-                    )
-                    yield "data: [DONE]\n\n"
-
-            return StreamingResponse(
-                event_stream(),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
+        logger.debug("run_agent returned successfully.")
         return build_openai_response(session=session, requested_model=request.model)
+
     except HTTPException:
         raise
     except ValueError as exc:
@@ -254,16 +272,12 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
                     finish_reason="stop"
                 )
                 yield "data: [DONE]\n\n"
-
             return StreamingResponse(
                 error_event_stream(),
                 media_type="text/event-stream",
                 headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
             )
-        return build_openai_fallback_response(
-            model=request.model,
-            content=exc.user_message,
-        )
+        return build_openai_fallback_response(model=request.model, content=exc.user_message)
     except Exception:
         if request.stream:
             created = int(datetime.now(timezone.utc).timestamp())
@@ -276,7 +290,6 @@ async def chat_completions(request: OpenAIChatCompletionRequest, raw_request: Re
                     finish_reason="stop"
                 )
                 yield "data: [DONE]\n\n"
-
             return StreamingResponse(
                 generic_error_stream(),
                 media_type="text/event-stream",

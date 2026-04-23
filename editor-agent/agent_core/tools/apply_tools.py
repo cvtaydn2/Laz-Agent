@@ -64,7 +64,7 @@ class ApplyEngine:
                 )
         except Exception as exc:
             for record in reversed(written_records):
-                self._rollback_record(workspace_path, record)
+                self._rollback(workspace_path, [record])
             return ApplyLogRecord(
                 session_id=session_id,
                 created_at=created_at,

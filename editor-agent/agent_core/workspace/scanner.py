@@ -10,10 +10,12 @@ from agent_core.models import FileScanResult, WorkspaceSummary
 from agent_core.workspace.filters import is_allowed_file, is_ignored_directory
 from agent_core.server.metrics import WORKSPACE_SCAN_DURATION_SECONDS
 import time
+from collections import OrderedDict
 
-# Global in-memory cache for scan results to provide near-instant consecutive requests
-_SCAN_CACHE: dict[str, tuple[float, list[FileScanResult], WorkspaceSummary]] = {}
-_SCAN_TTL = 60.0  # 60 seconds cache life
+# Global in-memory LRU cache for scan results (max 10 workspaces, 5 min TTL)
+_SCAN_CACHE: OrderedDict[str, tuple[float, list[FileScanResult], WorkspaceSummary]] = OrderedDict()
+_SCAN_TTL = 300.0   # 5 minutes
+_SCAN_CACHE_MAX = 10
 
 
 class WorkspaceScanner:
@@ -23,15 +25,21 @@ class WorkspaceScanner:
     async def scan(self, workspace_path: Path) -> tuple[list[FileScanResult], WorkspaceSummary]:
         ws_key = str(workspace_path.resolve())
         now = time.time()
-        
+
         if ws_key in _SCAN_CACHE:
             timestamp, results, summary = _SCAN_CACHE[ws_key]
             if now - timestamp < _SCAN_TTL:
+                # Move to end to mark as recently used (LRU)
+                _SCAN_CACHE.move_to_end(ws_key)
                 return results, summary
-                
+
         scan_start = time.monotonic()
         results, summary = await asyncio.to_thread(self._sync_scan, workspace_path)
         WORKSPACE_SCAN_DURATION_SECONDS.observe(time.monotonic() - scan_start)
+
+        # Evict oldest entry if cache is full
+        if len(_SCAN_CACHE) >= _SCAN_CACHE_MAX:
+            _SCAN_CACHE.popitem(last=False)
         _SCAN_CACHE[ws_key] = (now, results, summary)
         return results, summary
 

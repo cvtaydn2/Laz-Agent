@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import json
 import asyncio
 from textwrap import dedent
 from typing import Any, Iterable, AsyncIterable
@@ -20,6 +21,7 @@ from agent_core.models import (
     ApplyLogRecord,
     AgentMode,
     ChatMessage,
+    ModelResponse,
     ParsedAnswer,
     PatchProposal,
     SessionRecord,
@@ -27,7 +29,6 @@ from agent_core.models import (
     utc_now,
     ComparisonResult,
 )
-from agent_core.llm import get_llm_provider
 from agent_core.llm.nvidia import NvidiaBackendError, NvidiaTimeoutError
 from agent_core.output.writers import ApplyLogWriter, PatchProposalWriter, SessionWriter
 from agent_core.prompts import build_prompt
@@ -92,7 +93,7 @@ class AgentOrchestrator:
         self.logger.info("Starting run: mode=%s workspace=%s", mode.value, workspace_path)
         trivial_response = self._build_trivial_ask_response(mode, workspace_path, user_input)
         if trivial_response is not None:
-            self.session_writer.write(trivial_response)
+            await self.session_writer.write(trivial_response)
             self.logger.info(
                 "Completed run: mode=%s workspace=%s session=%s backend_model=%s files=0 context_chars=0 status=local_fast_path",
                 mode.value,
@@ -482,7 +483,7 @@ class AgentOrchestrator:
                 "Selam! Ben Laz-Agent. Sana bu projede yardımcı olmak için buradayım. "
                 "Kod analizi yapabilir, hataları bulabilir veya yeni özellikler ekleyebilirim. "
                 "Nasıl yardımcı olabilirim?"
-            ) if "selam" in text or "merhaba" in text or "nasılsın" in text else (
+            ) if "selam" in tail or "merhaba" in tail or "nasılsın" in tail else (
                 "Hello! I am Laz-Agent, your architectural assistant. "
                 "I can analyze your code, hunt for bugs, or suggest improvements. "
                 "How can I help you today?"

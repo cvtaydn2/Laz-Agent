@@ -7,28 +7,32 @@ from fastapi import HTTPException
 
 from agent_core.agent.orchestrator import AgentOrchestrator
 from agent_core.config import Settings
-from agent_core.logger import configure_logger
 from agent_core.models import AgentMode, HealthStatus, ParsedAnswer, SessionRecord, WorkspaceSummary, build_session_id, utc_now
 from agent_core.llm.nvidia import NvidiaBackendError, NvidiaTimeoutError
+from agent_core.tools.file_tools import resolve_workspace
+
+# Module-level singleton — created once, reused across all requests
+_orchestrator: AgentOrchestrator | None = None
 
 
-def resolve_workspace_or_400(workspace: str) -> Path:
-    path = Path(workspace).expanduser().resolve()
-    if not path.exists():
-        raise HTTPException(status_code=400, detail=f"Workspace does not exist: {path}")
-    if not path.is_dir():
-        raise HTTPException(status_code=400, detail=f"Workspace must be a directory: {path}")
-    return path
+def get_orchestrator() -> AgentOrchestrator:
+    """Return the shared orchestrator instance, creating it on first call."""
+    global _orchestrator
+    if _orchestrator is None:
+        _orchestrator = AgentOrchestrator(settings=Settings.load())
+    return _orchestrator
 
 
 def build_orchestrator() -> AgentOrchestrator:
-    settings = Settings.load()
-    return AgentOrchestrator(settings=settings)
+    """Alias kept for backward compatibility."""
+    return get_orchestrator()
 
 
-def build_server_logger():
-    settings = Settings.load()
-    return configure_logger(settings.logs_dir / "editor-agent.log")
+def resolve_workspace_or_400(workspace: str) -> Path:
+    try:
+        return resolve_workspace(workspace)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 def build_safe_fallback_session(
@@ -95,8 +99,8 @@ async def run_agent(
     diff_text: str | None = None,
     preferred_files: list[str] | None = None,
 ) -> SessionRecord:
-    logger = build_server_logger()
-    orchestrator = build_orchestrator()
+    orchestrator = get_orchestrator()
+    logger = orchestrator.logger
     workspace_path = resolve_workspace_or_400(workspace)
     try:
         logger.info("Starting orchestrator.run for mode=%s", mode.value)

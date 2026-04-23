@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Any, Dict, List
-from pydantic import BaseModel, Field
+
+from pydantic import BaseModel, Field, ValidationError
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 class KnowledgeEntry(BaseModel):
     pattern: str
@@ -17,14 +21,15 @@ class KnowledgeBase(BaseModel):
     entries: Dict[str, KnowledgeEntry] = Field(default_factory=dict)
     
     @classmethod
-    def load(cls, path: Path) -> KnowledgeBase:
+    def load(cls, path: Path) -> "KnowledgeBase":
         if not path.exists():
             return cls()
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                return cls.model_validate(data)
-        except Exception:
+            return cls.model_validate(data)
+        except (FileNotFoundError, json.JSONDecodeError, ValidationError) as exc:
+            logger.warning("Failed to load knowledge base from %s: %s", path, exc)
             return cls()
 
     def save(self, path: Path):

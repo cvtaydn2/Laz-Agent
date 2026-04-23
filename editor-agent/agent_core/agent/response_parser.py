@@ -5,6 +5,23 @@ import re
 
 from agent_core.models import ParsedAnswer, ProposedFileOperation, ReviewFinding
 
+# Pre-compiled regex patterns (module-level for performance)
+_STRICT_FILE_PATTERN = re.compile(
+    r"BEGIN_FILE\s+PATH:\s*(?P<path>[^\r\n]+)\s+ACTION:\s*(?P<action>[^\r\n]+)\s+CONTENT:\s*(?P<content>.*?)\s+END_FILE",
+    re.DOTALL,
+)
+_MD_BLOCK_PATTERN = re.compile(r"```[a-zA-Z]*\s+(?P<content>.*?)```", re.DOTALL)
+_MD_PATH_HINT_PATTERN = re.compile(
+    r"(?:<!--|#|//|Path:)\s*(?:File:)?\s*([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9]{1,5})",
+    re.IGNORECASE,
+)
+_COMMAND_PATTERN = re.compile(
+    r"BEGIN_COMMAND\s+COMMAND:\s*(?P<command>[^\r\n]+)\s+RATIONALE:\s*(?P<rationale>.*?)\s+END_COMMAND",
+    re.DOTALL,
+)
+_JSON_FENCED_PATTERN = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
+_JSON_INLINE_PATTERN = re.compile(r"(\{[\s\S]*\"summary\"[\s\S]*\})")
+
 
 class ResponseParser:
     HEADINGS = {
@@ -112,54 +129,39 @@ class ResponseParser:
 
     def _parse_file_operations(self, text: str) -> list[ProposedFileOperation]:
         operations: list[ProposedFileOperation] = []
-        
-        # 1. Original BEGIN_FILE / END_FILE format (Legacy/Strict)
-        strict_pattern = re.compile(
-            r"BEGIN_FILE\s+PATH:\s*(?P<path>[^\r\n]+)\s+ACTION:\s*(?P<action>[^\r\n]+)\s+CONTENT:\s*(?P<content>.*?)\s+END_FILE",
-            re.DOTALL,
-        )
-        for match in strict_pattern.finditer(text):
+
+        # 1. BEGIN_FILE / END_FILE strict format
+        for match in _STRICT_FILE_PATTERN.finditer(text):
             path = match.group("path").strip().strip("`").strip("'")
             action = match.group("action").strip().lower()
             content = match.group("content")
             operations.append(ProposedFileOperation(path=path, action=action, content=content.rstrip("\r\n")))
 
-        # 2. Markdown Code Block Detection (Smart/Natural)
-        # Matches: ```language (optional) [Path hint in comment or heading] ... ```
-        # We look for "# File: path/to/file" or "// File: path/to/file" at the start of blocks
-        md_pattern = re.compile(r"```[a-zA-Z]*\s+(?P<content>.*?)```", re.DOTALL)
-        for match in md_pattern.finditer(text):
+        # 2. Markdown code block with path hint comment
+        for match in _MD_BLOCK_PATTERN.finditer(text):
             content = match.group("content")
-            # Look for path hint in the first 3 lines of the block
             path_hint = None
-            first_lines = content.splitlines()[:3]
-            for line in first_lines:
-                # Matches: # File: path/to/file or // File: path/to/file or Path: path/to/file
-                path_match = re.search(r"(?:<!--|#|//|Path:)\s*(?:File:)?\s*([a-zA-Z0-9_\-\./\\]+\.[a-zA-Z0-9]{1,5})", line, re.IGNORECASE)
+            for line in content.splitlines()[:3]:
+                path_match = _MD_PATH_HINT_PATTERN.search(line)
                 if path_match:
                     path_hint = path_match.group(1).strip()
                     break
-            
+
             if path_hint and not any(op.path == path_hint for op in operations):
-                # If we found a path hint and haven't already added this file via strict pattern
                 operations.append(
                     ProposedFileOperation(
                         path=path_hint,
-                        action="update", # Default to update for MD blocks
-                        content=content.strip("\r\n")
+                        action="update",
+                        content=content.strip("\r\n"),
                     )
                 )
-        
+
         return operations
 
     def _parse_command_operations(self, text: str) -> list[ProposedCommandOperation]:
         from agent_core.models import ProposedCommandOperation
         commands: list[ProposedCommandOperation] = []
-        pattern = re.compile(
-            r"BEGIN_COMMAND\s+COMMAND:\s*(?P<command>[^\r\n]+)\s+RATIONALE:\s*(?P<rationale>.*?)\s+END_COMMAND",
-            re.DOTALL,
-        )
-        for match in pattern.finditer(text):
+        for match in _COMMAND_PATTERN.finditer(text):
             command = match.group("command").strip().strip("`").strip("'")
             rationale = match.group("rationale").strip()
             commands.append(ProposedCommandOperation(command=command, rationale=rationale))
@@ -184,11 +186,11 @@ class ResponseParser:
         if stripped.startswith("{") and stripped.endswith("}"):
             return stripped
 
-        fenced_match = re.search(r"```json\s*(\{.*?\})\s*```", text, re.DOTALL | re.IGNORECASE)
+        fenced_match = _JSON_FENCED_PATTERN.search(text)
         if fenced_match:
             return fenced_match.group(1)
 
-        inline_match = re.search(r"(\{[\s\S]*\"summary\"[\s\S]*\})", text)
+        inline_match = _JSON_INLINE_PATTERN.search(text)
         if inline_match:
             return inline_match.group(1)
 

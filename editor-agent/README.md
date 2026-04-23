@@ -122,9 +122,9 @@ Default backend configuration:
 - `AGENT_TIMEOUT_SECONDS=18`
 - `AGENT_MAX_FILE_BYTES=120000`
 - `AGENT_MAX_CHARS_PER_FILE=2500`
-- `AGENT_MAX_CONTEXT_CHARS=12000`
-- `AGENT_TOP_K_FILES=5`
-- `AGENT_MAX_COMPLETION_TOKENS=300`
+- `AGENT_MAX_CONTEXT_CHARS=24000`
+- `AGENT_TOP_K_FILES=20`
+- `AGENT_MAX_COMPLETION_TOKENS=2048`
 - `AGENT_DEFAULT_WORKSPACE=<server start directory by default>`
 
 These remain configurable via environment variables.
@@ -324,9 +324,9 @@ If responses are slow:
 - `AGENT_TIMEOUT_SECONDS`: defaults to `18`
 - `AGENT_MAX_FILE_BYTES`: defaults to `120000`
 - `AGENT_MAX_CHARS_PER_FILE`: defaults to `2500`
-- `AGENT_MAX_CONTEXT_CHARS`: defaults to `12000`
-- `AGENT_TOP_K_FILES`: defaults to `5`
-- `AGENT_MAX_COMPLETION_TOKENS`: defaults to `300`
+- `AGENT_MAX_CONTEXT_CHARS`: defaults to `24000`
+- `AGENT_TOP_K_FILES`: defaults to `20`
+- `AGENT_MAX_COMPLETION_TOKENS`: defaults to `2048`
 - `AGENT_SERVER_HOST`: defaults to `127.0.0.1`
 - `AGENT_SERVER_PORT`: defaults to `8000`
 

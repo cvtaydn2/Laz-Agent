@@ -20,6 +20,14 @@ class SessionWriter:
             await f.write(json.dumps(session.model_dump(mode="json"), indent=2, ensure_ascii=False))
         return target
 
+    async def read(self, session_id: str) -> SessionRecord | None:
+        target = self.settings.session_dir / f"{session_id}.json"
+        if not target.exists():
+            return None
+        async with aiofiles.open(target, mode="r", encoding="utf-8") as f:
+            data = json.loads(await f.read())
+        return SessionRecord(**data)
+
     def prune_old_sessions(self, max_age_days: int = 7) -> int:
         import time
         count = 0
